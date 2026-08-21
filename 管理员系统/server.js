@@ -1,6 +1,16 @@
+// 读取.env文件
+const envPath = path.join(__dirname, '..', '.env');
+if (fs.existsSync(envPath)) {
+  fs.readFileSync(envPath, 'utf-8').split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const [key, ...valueParts] = trimmed.split('=');
+      if (key && valueParts.length) process.env[key.trim()] = valueParts.join('=').trim();
+    }
+  });
+}
+
 const express = require('express');
-const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 
@@ -8,16 +18,16 @@ const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-const GAME_SERVER = 'http://localhost:3002';
+const GAME_SERVER = 'http://localhost:' + (process.env.GAME_PORT || '3002');
 const ADMIN_KEY = process.env.ADMIN_KEY;
 if (!ADMIN_KEY) {
-  console.error('错误：请设置 ADMIN_KEY 环境变量');
-  console.error('示例：set ADMIN_KEY=your_secret_key && node server.js');
+  console.error('错误：请在 .env 文件中设置 ADMIN_KEY');
+  console.error('文件位置：' + envPath);
   process.exit(1);
 }
 
 // MongoDB 连接
-mongoose.connect('mongodb://localhost:27017/gomoku')
+mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/gomoku')
   .then(() => console.log('管理员系统 MongoDB 连接成功'))
   .catch(err => { console.error('MongoDB 连接失败:', err.message); process.exit(1); });
 
@@ -270,7 +280,7 @@ app.post('/api/force-delete', async (req, res) => {
   res.json({ ok: true });
 });
 
-const PORT = process.env.PORT || 3003;
+const PORT = process.env.ADMIN_PORT || 3003;
 
 app.get('/api/game-log', async (req, res) => {
   try {

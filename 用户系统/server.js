@@ -1,11 +1,23 @@
 process.on('uncaughtException', (err) => { console.error('未捕获异常:', err.message); });
 process.on('unhandledRejection', (err) => { console.error('未处理Promise:', err); });
 
+// 读取.env文件
+const path = require('path');
+const fs = require('fs');
+const envPath = path.join(__dirname, '..', '.env');
+if (fs.existsSync(envPath)) {
+  fs.readFileSync(envPath, 'utf-8').split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const [key, ...valueParts] = trimmed.split('=');
+      if (key && valueParts.length) process.env[key.trim()] = valueParts.join('=').trim();
+    }
+  });
+}
+
 const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
-const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 const argon2 = require('argon2');
 const mongoose = require('mongoose');
@@ -19,7 +31,7 @@ app.use('/screenshots', express.static(path.join(__dirname, 'data', 'screenshots
 app.use(express.json({ limit: '10mb' }));
 
 // ==================== MongoDB 连接 ====================
-mongoose.connect('mongodb://localhost:27017/gomoku')
+mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/gomoku')
   .then(() => console.log('MongoDB 连接成功'))
   .catch(err => { console.error('MongoDB 连接失败:', err.message); process.exit(1); });
 
@@ -2280,5 +2292,5 @@ wss.on('close', () => {
 });
 
 // ==================== 启动 ====================
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.GAME_PORT || 3002;
 server.listen(PORT, () => { console.log(`五子棋(用户版)运行在 http://localhost:${PORT}`); });
