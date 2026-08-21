@@ -1,3 +1,6 @@
+const path = require('path');
+const fs = require('fs');
+
 // 读取.env文件
 const envPath = path.join(__dirname, '..', '.env');
 if (fs.existsSync(envPath)) {
