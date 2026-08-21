@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>五子棋管理后台</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft YaHei', sans-serif; background: #0f1923; color: #eee; min-height: 100vh; }
+.header { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px; background: #16213e; border-bottom: 1px solid #222; }
+.header h1 { font-size: 18px; }
+.header .nav { display: flex; gap: 16px; }
+.header .nav span { cursor: pointer; color: #888; font-size: 14px; }
+.header .nav span.active, .header .nav span:hover { color: #fff; }
+.page { display: none; padding: 20px 24px; }
+.page.active { display: block; }
+.page h2 { margin-bottom: 16px; font-size: 20px; }
+
+.room-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.room-card { background: #16213e; border-radius: 10px; padding: 16px; border: 1px solid #222; }
+.room-card .room-title { font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+.room-card .room-title .room-id { color: #5c9ded; }
+.room-card .room-players { font-size: 13px; color: #aaa; margin-bottom: 10px; }
+.room-card .room-players .p-black { color: #ddd; }
+.room-card .room-players .p-white { color: #f0c040; }
+.mini-board { display: grid; grid-template-columns: repeat(15, 1fr); gap: 1px; background: #0a1520; border-radius: 4px; padding: 2px; }
+.mini-cell { width: 100%; aspect-ratio: 1; border-radius: 2px; }
+.cell-empty { background: #c8a96e; }
+.cell-black { background: #222; }
+.cell-white { background: #eee; }
+.mini-chess { display: grid; grid-template-columns: repeat(9, 1fr); gap: 2px; background: #c8a96e; border-radius: 4px; padding: 4px; position: relative; }
+.mc-cell { aspect-ratio: 1; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; z-index: 1; position: relative; }
+.mc-black { background: linear-gradient(135deg, #f5ead0, #d8c8a0); color: #2a3a28; border: 1.5px solid #8b7050; }
+.mc-red { background: linear-gradient(135deg, #f5ead0, #d8c8a0); color: #c83830; border: 1.5px solid #8b7050; }
+.mc-piece { font-family: "KaiTi","STKaiti","SimKai",serif; }
+.mini-chess::before { content: ''; position: absolute; top: 4px; left: 4px; right: 4px; bottom: 4px; background-image: repeating-linear-gradient(0deg, transparent, transparent calc((100% - 8px) / 9 - 1px), #8b7050 calc((100% - 8px) / 9 - 1px), #8b7050 calc((100% - 8px) / 9)), repeating-linear-gradient(90deg, transparent, transparent calc(100% / 9 - 1px), #8b7050 calc(100% / 9 - 1px), #8b7050 calc(100% / 9)); pointer-events: none; z-index: 0; }
+.mark-btns { display: flex; gap: 6px; margin-top: 10px; }
+.mark-btns button { padding: 5px 10px; font-size: 12px; border: none; border-radius: 4px; cursor: pointer; color: #fff; }
+.mark-boost { background: #8b4513; }
+.mark-cheat { background: #8b0000; }
+.mark-abuse { background: #5c2a2a; }
+.mark-btns button:hover { opacity: 0.8; }
+
+.report-list { display: flex; flex-direction: column; gap: 10px; }
+.report-card { background: #16213e; border-radius: 10px; padding: 16px; border: 1px solid #222; }
+.report-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.report-header .target { font-weight: bold; font-size: 16px; }
+.report-header .time { font-size: 12px; color: #666; }
+.report-body { font-size: 13px; color: #aaa; margin-bottom: 4px; }
+.report-actions { display: flex; gap: 8px; margin-top: 10px; }
+.report-actions button { padding: 6px 16px; font-size: 13px; border: none; border-radius: 6px; cursor: pointer; color: #fff; }
+.btn-approve { background: #2ecc71; }
+.btn-reject { background: #e74c3c; }
+.report-actions button:hover { opacity: 0.8; }
+
+.user-panel { background: #16213e; border-radius: 10px; padding: 20px; max-width: 600px; }
+.user-panel input { width: 100%; padding: 10px 14px; font-size: 15px; border: 1px solid #5c9ded; border-radius: 6px; background: #1e2d4d; color: #fff; outline: none; margin-bottom: 12px; }
+.user-info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+.user-info-box { background: #0d1b3e; border-radius: 8px; padding: 12px; text-align: center; }
+.user-info-box .val { font-size: 22px; font-weight: bold; }
+.user-info-box .label { font-size: 12px; color: #888; margin-top: 4px; }
+.user-report-item { padding: 8px 12px; background: #0d1b3e; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
+.empty-msg { text-align: center; color: #666; padding: 40px; }
+.ban-badge { display: inline-block; padding: 3px 8px; background: #5c2a2a; color: #e74c3c; border-radius: 4px; font-size: 12px; margin-left: 8px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>五子棋管理后台</h1>
+  <div class="nav">
+    <span class="active" data-page="rooms" onclick="showPage('rooms')">实时对局</span>
+    <span data-page="reports" onclick="showPage('reports')">举报审核</span>
+    <span data-page="appeals" onclick="showPage('appeals')">申诉审核</span>
+    <span data-page="gamelog" onclick="showPage('gamelog')">对局记录</span>
+    <span data-page="chatlog" onclick="showPage('chatlog')">聊天日志</span>
+    <span data-page="user" onclick="showPage('user')">用户查询</span>
+  </div>
+</div>
+
+<div id="login-overlay" style="display:flex;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:#16213e;border-radius:12px;padding:32px;width:360px;text-align:center;">
+    <h2 style="margin-bottom:20px;">管理员登录</h2>
+    <input type="password" id="admin-key-input" placeholder="请输入管理密钥" style="width:100%;padding:12px 14px;font-size:15px;border:1px solid #5c9ded;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;margin-bottom:16px;">
+    <button onclick="adminLogin()" style="width:100%;padding:12px;background:#0f3460;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:15px;">登录</button>
+    <div id="login-error" style="color:#e74c3c;font-size:13px;margin-top:10px;"></div>
+  </div>
+</div>
+
+<div id="page-rooms" class="page active">
+  <h2>实时对局 <button onclick="refreshRooms()" style="margin-left:10px;padding:4px 12px;font-size:13px;background:#0f3460;color:#fff;border:none;border-radius:4px;cursor:pointer;">刷新</button></h2>
+  <div id="rooms-content" class="room-grid"></div>
+</div>
+
+<div id="page-reports" class="page">
+  <h2>待审核举报 <button onclick="refreshReports()" style="margin-left:10px;padding:4px 12px;font-size:13px;background:#0f3460;color:#fff;border:none;border-radius:4px;cursor:pointer;">刷新</button></h2>
+  <div id="reports-content" class="report-list"></div>
+</div>
+
+<div id="page-appeals" class="page">
+  <h2>待审核申诉 <button onclick="refreshAppeals()" style="margin-left:10px;padding:4px 12px;font-size:13px;background:#0f3460;color:#fff;border:none;border-radius:4px;cursor:pointer;">刷新</button></h2>
+  <div id="appeals-content" class="report-list"></div>
+</div>
+
+<div id="page-gamelog" class="page">
+  <h2>对局记录 <button onclick="refreshGameLog()" style="margin-left:10px;padding:4px 12px;font-size:13px;background:#0f3460;color:#fff;border:none;border-radius:4px;cursor:pointer;">刷新</button></h2>
+  <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;">
+    <label style="color:#888;font-size:14px;">查询天数：</label>
+    <select id="gamelog-days" style="padding:6px 10px;font-size:14px;background:#1e2d4d;color:#fff;border:1px solid #333;border-radius:4px;">
+      <option value="1">1天</option>
+      <option value="3">3天</option>
+      <option value="7" selected>7天</option>
+      <option value="14">14天</option>
+      <option value="30">30天</option>
+    </select>
+  </div>
+  <div id="gamelog-content" class="report-list"></div>
+</div>
+
+<div id="page-chatlog" class="page">
+  <h2>聊天日志 <button onclick="refreshChatLog()" style="margin-left:10px;padding:4px 12px;font-size:13px;background:#0f3460;color:#fff;border:none;border-radius:4px;cursor:pointer;">刷新</button></h2>
+  <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <label style="color:#888;font-size:14px;">查询天数：</label>
+    <select id="chatlog-days" style="padding:6px 10px;font-size:14px;background:#1e2d4d;color:#fff;border:1px solid #333;border-radius:4px;">
+      <option value="1">1天</option>
+      <option value="3">3天</option>
+      <option value="7" selected>7天</option>
+      <option value="14">14天</option>
+      <option value="15">15天</option>
+    </select>
+    <label style="color:#888;font-size:14px;">房间：</label>
+    <input id="chatlog-room" placeholder="房间ID（可选）" style="padding:6px 10px;font-size:14px;background:#1e2d4d;color:#fff;border:1px solid #333;border-radius:4px;width:140px;">
+    <label style="color:#888;font-size:14px;">用户：</label>
+    <input id="chatlog-user" placeholder="用户名（可选）" style="padding:6px 10px;font-size:14px;background:#1e2d4d;color:#fff;border:1px solid #333;border-radius:4px;width:140px;">
+    <button onclick="refreshChatLog()" style="padding:6px 14px;font-size:13px;background:#0f3460;color:#fff;border:none;border-radius:4px;cursor:pointer;">查询</button>
+  </div>
+  <div id="chatlog-content" class="report-list"></div>
+</div>
+
+<div id="page-user" class="page">
+  <h2>用户查询</h2>
+  <div class="user-panel">
+    <input id="search-user" placeholder="输入用户名" onkeydown="if(event.key==='Enter')searchUser()">
+    <button onclick="searchUser()" style="width:100%;padding:10px;background:#0f3460;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;margin-bottom:16px;">查询</button>
+    <div id="user-detail"></div>
+  </div>
+</div>
+
+<script>
+const reportTypeNames = { boost: '刷胜率/放水', cheat: '使用外挂', abuse: '恶意行为', other: '其他' };
+let refreshTimer = null;
+
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('.header .nav span').forEach(s => s.classList.remove('active'));
+  const target = document.querySelector(`.header .nav span[data-page="${name}"]`);
+  if (target) target.classList.add('active');
+  if (name === 'rooms') refreshRooms();
+  if (name === 'reports') refreshReports();
+  if (name === 'appeals') refreshAppeals();
+  if (name === 'gamelog') refreshGameLog();
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  if (name === 'rooms') refreshTimer = setInterval(refreshRooms, 3000);
+}
+
+let adminKey = localStorage.getItem('admin_key') || '';
+
+function adminLogin() {
+  const key = document.getElementById('admin-key-input').value.trim();
+  if (!key) { document.getElementById('login-error').textContent = '请输入密钥'; return; }
+  adminKey = key;
+  localStorage.setItem('admin_key', key);
+  document.getElementById('login-overlay').style.display = 'none';
+  refreshRooms();
+}
+
+function adminLogout() {
+  adminKey = '';
+  localStorage.removeItem('admin_key');
+  location.reload();
+}
+
+// 检查是否已登录
+if (!adminKey) {
+  document.getElementById('login-overlay').style.display = 'flex';
+} else {
+  document.getElementById('login-overlay').style.display = 'none';
+}
+
+async function apiFetch(path, opts) {
+  opts = opts || {};
+  const headers = Object.assign({ 'Authorization': 'Bearer ' + adminKey }, opts.headers || {});
+  if (opts.method === 'POST') headers['Content-Type'] = 'application/json';
+  opts.headers = headers;
+  const res = await fetch(path, opts);
+  const data = await res.json();
+  if (res.status === 401 || res.status === 403) {
+    adminKey = '';
+    localStorage.removeItem('admin_key');
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.getElementById('login-error').textContent = '密钥无效或已过期，请重新登录';
+    throw new Error('认证失败');
+  }
+  return data;
+}
+
+async function refreshRooms() {
+  const el = document.getElementById('rooms-content');
+  try {
+    const rooms = await apiFetch('/api/rooms');
+    if (!rooms.length) { el.innerHTML = '<div class="empty-msg">当前没有进行中的对局</div>'; return; }
+    const gameTypeNames = { gomoku: '五子棋', go: '围棋', chess: '中国象棋' };
+    el.innerHTML = rooms.map(r => {
+      let miniHtml = '';
+      if (r.gameType === 'chess') {
+        const ch = {K:'將',A:'士',B:'象',N:'馬',R:'車',C:'砲',P:'卒',k:'帥',a:'仕',b:'相',n:'馬',r:'車',c:'炮',p:'兵'};
+        const cid = 'mc_' + r.id.replace(/[^a-zA-Z0-9]/g,'');
+        miniHtml = `<canvas id="${cid}" width="306" height="340" style="border-radius:4px"></canvas>`;
+        setTimeout(() => {
+          const cv = document.getElementById(cid);
+          if (!cv) return;
+          const cx = cv.getContext('2d');
+          const cw = 34, ch2 = 34, ox = 17, oy = 17;
+          cx.fillStyle = '#c8a96e'; cx.fillRect(0, 0, 306, 340);
+          cx.strokeStyle = '#8b7050'; cx.lineWidth = 1;
+          for (let i = 0; i < 10; i++) { cx.beginPath(); cx.moveTo(ox, oy + i * ch2); cx.lineTo(ox + 8 * cw, oy + i * ch2); cx.stroke(); }
+          for (let i = 0; i < 9; i++) {
+            if (i === 0 || i === 8) { cx.beginPath(); cx.moveTo(ox + i * cw, oy); cx.lineTo(ox + i * cw, oy + 9 * ch2); cx.stroke(); }
+            else { cx.beginPath(); cx.moveTo(ox + i * cw, oy); cx.lineTo(ox + i * cw, oy + 4 * ch2); cx.stroke(); cx.beginPath(); cx.moveTo(ox + i * cw, oy + 5 * ch2); cx.lineTo(ox + i * cw, oy + 9 * ch2); cx.stroke(); }
+          }
+          cx.beginPath(); cx.moveTo(ox, oy + 4 * ch2); cx.lineTo(ox + 8 * cw, oy + 5 * ch2); cx.stroke();
+          cx.beginPath(); cx.moveTo(ox + 8 * cw, oy + 4 * ch2); cx.lineTo(ox, oy + 5 * ch2); cx.stroke();
+          cx.beginPath(); cx.moveTo(ox + 3 * cw, oy); cx.lineTo(ox + 5 * cw, oy + 2 * ch2); cx.stroke();
+          cx.beginPath(); cx.moveTo(ox + 5 * cw, oy); cx.lineTo(ox + 3 * cw, oy + 2 * ch2); cx.stroke();
+          cx.beginPath(); cx.moveTo(ox + 3 * cw, oy + 7 * ch2); cx.lineTo(ox + 5 * cw, oy + 9 * ch2); cx.stroke();
+          cx.beginPath(); cx.moveTo(ox + 5 * cw, oy + 7 * ch2); cx.lineTo(ox + 3 * cw, oy + 9 * ch2); cx.stroke();
+          for (let rr = 0; rr < 10; rr++) for (let cc = 0; cc < 9; cc++) {
+            const p = r.board[rr] && r.board[rr][cc]; if (!p) continue;
+            const x = ox + cc * cw, y = oy + rr * ch2, radius = 14;
+            const isRed = p === p.toLowerCase();
+            cx.beginPath(); cx.arc(x, y, radius, 0, Math.PI * 2);
+            const pg = cx.createRadialGradient(x - 2, y - 3, 1, x, y, radius);
+            pg.addColorStop(0, '#f5ead0'); pg.addColorStop(1, '#d8c8a0');
+            cx.fillStyle = pg; cx.fill();
+            cx.strokeStyle = '#8b7050'; cx.lineWidth = 1.5; cx.stroke();
+            cx.beginPath(); cx.arc(x, y, radius - 3, 0, Math.PI * 2);
+            cx.strokeStyle = isRed ? '#c83830' : '#3a5a30'; cx.lineWidth = 1; cx.stroke();
+            cx.fillStyle = isRed ? '#c83830' : '#2a3a28';
+            cx.font = 'bold 12px "KaiTi","STKaiti",serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+            cx.fillText(ch[p] || p, x, y + 1);
+          }
+        }, 0);
+      } else {
+        const sz = r.size || (r.gameType === 'go' ? 19 : 15);
+        const flat = r.board.flat();
+        miniHtml = `<div class="mini-board" style="grid-template-columns:repeat(${Math.min(sz,19)},1fr)">${flat.map(v => `<div class="mini-cell ${v===0?'cell-empty':v===1?'cell-black':'cell-white'}"></div>`).join('')}</div>`;
+      }
+      const displayId = r.id.replace(/^[a-z]+_/, '');
+      return `<div class="room-card">
+        <div class="room-title">
+          <span class="room-id">房间: ${displayId}</span>
+          <span style="font-size:11px;padding:2px 6px;background:#0f3460;border-radius:4px;color:#aaa;">${gameTypeNames[r.gameType]||r.gameType}</span>
+          <span style="font-size:12px;color:#888;">第${r.moveCount}手</span>
+        </div>
+        <div class="room-players"><span class="p-black">● ${r.names[1]}</span> VS <span class="p-white">○ ${r.names[2]}</span></div>
+        ${miniHtml}
+        <div class="mark-btns">
+          <button class="mark-boost" onclick="markUser('${r.names[1]}','boost')">标记${r.names[1]}放水</button>
+          <button class="mark-boost" onclick="markUser('${r.names[2]}','boost')">标记${r.names[2]}放水</button>
+          <button class="mark-abuse" onclick="markUser('${r.names[1]}','cheat')">标记${r.names[1]}作弊</button>
+          <button class="mark-abuse" onclick="markUser('${r.names[2]}','cheat')">标记${r.names[2]}作弊</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch { el.innerHTML = '<div class="empty-msg">无法连接游戏服务器</div>'; }
+}
+
+async function markUser(username, reason) {
+  if (!confirm(`确定标记 ${username} 为${reportTypeNames[reason]}？`)) return;
+  await apiFetch('/api/mark', { method: 'POST', body: JSON.stringify({ username, reason }) });
+  alert('已标记');
+  refreshRooms();
+}
+
+async function refreshGameLog() {
+  const el = document.getElementById('gamelog-content');
+  const days = document.getElementById('gamelog-days').value;
+  try {
+    const data = await apiFetch('/api/game-log?days=' + days);
+    if (!data.games || !data.games.length) { el.innerHTML = '<div class="empty-msg">近' + days + '天暂无对局记录</div>'; return; }
+    el.innerHTML = `<div style="margin-bottom:12px;color:#888;font-size:14px;">共 ${data.total} 场对局</div>` +
+      data.games.map(g => {
+        const time = new Date(g.time).toLocaleString('zh-CN');
+        const winnerColor = g.winner === 1 ? '黑' : g.winner === 2 ? '白' : '平';
+        return `<div style="padding:10px 14px;background:#16213e;border-radius:8px;margin-bottom:6px;border:1px solid #222;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:bold;">${g.winner} ${winnerColor}胜</span>
+            <span style="color:#666;font-size:12px;">${time}</span>
+          </div>
+          <div style="font-size:13px;color:#aaa;margin-top:4px;">${g.loser} 负 · ${g.totalMoves}手</div>
+        </div>`;
+      }).join('');
+  } catch { el.innerHTML = '<div class="empty-msg">加载失败</div>'; }
+}
+
+async function refreshChatLog() {
+  const el = document.getElementById('chatlog-content');
+  const days = document.getElementById('chatlog-days').value;
+  const room = document.getElementById('chatlog-room').value.trim();
+  const user = document.getElementById('chatlog-user').value.trim();
+  try {
+    let url = '/api/admin/chat-logs?days=' + days;
+    if (room) url += '&room=' + encodeURIComponent(room);
+    if (user) url += '&username=' + encodeURIComponent(user);
+    const data = await apiFetch(url);
+    if (!data.logs || !data.logs.length) { el.innerHTML = '<div class="empty-msg">近' + days + '天暂无聊天记录</div>'; return; }
+    el.innerHTML = '<div style="margin-bottom:12px;color:#888;font-size:14px;">共 ' + data.total + ' 条记录</div>' +
+      data.logs.map(l => {
+        const time = new Date(l.time).toLocaleString('zh-CN');
+        const colorLabel = l.color === 1 ? '黑' : l.color === 2 ? '白' : '系';
+        const colorStyle = l.color === 1 ? 'color:#ddd;' : l.color === 2 ? 'color:#f0c040;' : 'color:#5c9ded;';
+        const filteredBadge = l.filtered ? '<span style="background:#e74c3c;color:#fff;font-size:11px;padding:1px 6px;border-radius:4px;margin-left:6px;">已过滤</span>' : '';
+        const alertBadge = l.alert ? '<span style="background:#f39c12;color:#fff;font-size:11px;padding:1px 6px;border-radius:4px;margin-left:6px;">预警</span>' : '';
+        return '<div style="padding:10px 14px;background:#16213e;border-radius:8px;margin-bottom:6px;border:1px solid #222;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+            '<span><b style="' + colorStyle + '">[' + colorLabel + ']</b> ' + (l.username || '匿名') + filteredBadge + alertBadge + '</span>' +
+            '<span style="color:#666;font-size:12px;">' + time + '</span>' +
+          '</div>' +
+          '<div style="font-size:13px;color:#aaa;margin-top:4px;word-break:break-all;">' + l.text + '</div>' +
+          '<div style="font-size:11px;color:#555;margin-top:2px;">房间: ' + l.roomId + '</div>' +
+        '</div>';
+      }).join('');
+  } catch { el.innerHTML = '<div class="empty-msg">加载失败</div>'; }
+}
+
+async function refreshReports() {
+  const el = document.getElementById('reports-content');
+  try {
+    const reports = await apiFetch('/api/reports');
+    if (!reports.length) { el.innerHTML = '<div class="empty-msg">暂无待审核举报</div>'; return; }
+    el.innerHTML = reports.map(r => `<div class="report-card">
+      <div class="report-header"><span class="target">${r.target}</span><span class="time">${new Date(r.time).toLocaleString('zh-CN')}</span></div>
+      <div class="report-body">举报人：${r.reporter} | 类型：${reportTypeNames[r.reasonType] || r.reasonType}</div>
+      ${r.reason !== r.reasonType ? `<div class="report-body">说明：${r.reason}</div>` : ''}
+      ${r.screenshot ? `<div style="margin:8px 0;"><img src="http://localhost:3002/${r.screenshot}" style="max-width:100%;max-height:300px;border-radius:6px;border:1px solid #333;cursor:pointer;" onclick="window.open(this.src,'_blank')"></div>` : '<div class="report-body" style="color:#e74c3c;">未上传截图</div>'}
+      <div class="report-actions">
+        <button class="btn-approve" onclick="approveReport('${r.id}')">确认违规</button>
+        <button class="btn-reject" onclick="rejectReport('${r.id}')">驳回</button>
+        <button style="background:#333;padding:6px 12px;font-size:13px;border:none;border-radius:6px;cursor:pointer;" onclick="viewUser('${r.target}')">查看用户</button>
+      </div>
+    </div>`).join('');
+  } catch { el.innerHTML = '<div class="empty-msg">加载失败</div>'; }
+}
+
+async function approveReport(id) {
+  try {
+    const r = await apiFetch('/api/report/approve', { method: 'POST', body: JSON.stringify({ reportId: id }) });
+    if (r.error) { alert(r.error); return; }
+    refreshReports();
+  } catch(e) { alert('操作失败: ' + e.message); }
+}
+async function rejectReport(id) {
+  try {
+    const r = await apiFetch('/api/report/reject', { method: 'POST', body: JSON.stringify({ reportId: id }) });
+    if (r.error) { alert(r.error); return; }
+    refreshReports();
+  } catch(e) { alert('操作失败: ' + e.message); }
+}
+
+const appealStatusNames = { pending: '待审核', approved: '已解封', rejected: '已驳回（+3天）' };
+async function refreshAppeals() {
+  const el = document.getElementById('appeals-content');
+  try {
+    const appeals = await apiFetch('/api/appeals');
+    if (!appeals.length) { el.innerHTML = '<div class="empty-msg">暂无待审核申诉</div>'; return; }
+    el.innerHTML = appeals.map(a => `<div class="report-card">
+      <div class="report-header"><span class="target">${a.username}</span><span class="time">${new Date(a.time).toLocaleString('zh-CN')}</span></div>
+      <div class="report-body" style="margin:6px 0;padding:8px;background:#0d1b3e;border-radius:6px;">${a.reason}</div>
+      <div class="report-actions">
+        <button class="btn-approve" onclick="approveAppeal('${a.id}')">通过（解封）</button>
+        <button class="btn-reject" onclick="rejectAppeal('${a.id}')">驳回（+3天）</button>
+        <button style="background:#333;padding:6px 12px;font-size:13px;border:none;border-radius:6px;cursor:pointer;" onclick="viewUser('${a.username}')">查看用户</button>
+      </div>
+    </div>`).join('');
+  } catch { el.innerHTML = '<div class="empty-msg">加载失败</div>'; }
+}
+async function approveAppeal(id) {
+  try {
+    const r = await apiFetch('/api/appeal/approve', { method: 'POST', body: JSON.stringify({ appealId: id }) });
+    if (r.error) { alert(r.error); return; }
+    refreshAppeals();
+  } catch(e) { alert('操作失败: ' + e.message); }
+}
+async function rejectAppeal(id) {
+  try {
+    const r = await apiFetch('/api/appeal/reject', { method: 'POST', body: JSON.stringify({ appealId: id }) });
+    if (r.error) { alert(r.error); return; }
+    refreshAppeals();
+  } catch(e) { alert('操作失败: ' + e.message); }
+}
+
+function viewUser(name) {
+  showPage('user');
+  document.getElementById('search-user').value = name;
+  searchUser();
+}
+
+async function searchUser() {
+  const name = document.getElementById('search-user').value.trim();
+  if (!name) return;
+  const el = document.getElementById('user-detail');
+  try {
+    const u = await apiFetch('/api/user/' + encodeURIComponent(name));
+    const banHtml = u.banned ? `<span class="ban-badge">已封禁${u.banInfo.permanent ? '(永久)' : '('+u.banInfo.daysLeft+'天)'}</span>` : '';
+    let reportsHtml = '';
+    if (u.reports && u.reports.length) {
+      reportsHtml = '<div style="margin-top:14px;"><div style="font-size:14px;margin-bottom:8px;color:#aaa;">举报记录</div>';
+      u.reports.forEach(r => {
+        const statusColor = r.status === 'pending' ? '#f0c040' : r.status === 'approved' ? '#e74c3c' : '#888';
+        const statusName = r.status === 'pending' ? '待审' : r.status === 'approved' ? '确认违规' : r.status === 'rejected' ? '已驳回' : r.status;
+        reportsHtml += `<div class="user-report-item">
+          <span style="color:${statusColor};">[${statusName}]</span>
+          ${r.adminMark ? '管理员标记' : '举报人: ' + r.reporter} — ${reportTypeNames[r.reasonType] || r.reasonType}
+          <span style="float:right;color:#666;">${new Date(r.time).toLocaleDateString('zh-CN')}</span>
+        </div>`;
+      });
+      reportsHtml += '</div>';
+    }
+    el.innerHTML = `
+      <div style="font-size:18px;font-weight:bold;margin-bottom:4px;">${u.username} ${banHtml}</div>
+      <div style="font-size:12px;color:#666;margin-bottom:12px;">注册于 ${new Date(u.createdAt).toLocaleDateString('zh-CN')}</div>
+      <div class="user-info-grid">
+        <div class="user-info-box"><div class="val" style="color:#2ecc71;">${u.wins}</div><div class="label">胜</div></div>
+        <div class="user-info-box"><div class="val" style="color:#e74c3c;">${u.losses}</div><div class="label">负</div></div>
+        <div class="user-info-box"><div class="val" style="color:#f0c040;">${u.winRate}%</div><div class="label">胜率</div></div>
+      </div>
+      <div style="font-size:13px;color:#888;margin-bottom:8px;">总场: ${u.games} | 举报数: ${u.reports ? u.reports.length : 0}</div>
+      ${reportsHtml}
+      ${u.deleted ? '<div style="padding:6px 12px;background:#5c2a2a22;border:1px solid #5c2a2a;border-radius:6px;font-size:13px;color:#e74c3c;margin-bottom:8px;">该用户已注销</div>' : ''}
+      <button onclick="forceDelete('${u.username}')" style="width:100%;padding:10px;background:#5c2a2a;color:#e74c3c;border:none;border-radius:6px;cursor:pointer;font-size:14px;">彻底注销（删除所有数据）</button>
+    `;
+  } catch (e) { el.innerHTML = `<div style="color:#e74c3c;">${e.message}</div>`; }
+}
+
+async function forceDelete(username) {
+  if (!confirm(`确定要彻底删除用户 "${username}" 的所有数据？此操作不可撤销！`)) return;
+  try {
+    const r = await apiFetch('/api/force-delete', { method: 'POST', body: JSON.stringify({ username }) });
+    if (r.error) { alert(r.error); return; }
+    alert('用户已彻底删除');
+    document.getElementById('user-detail').innerHTML = '';
+    document.getElementById('search-user').value = '';
+  } catch (e) { alert(e.message); }
+}
+
+refreshRooms();
+</script>
+</body>
+</html>
