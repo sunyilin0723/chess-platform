@@ -167,6 +167,192 @@ app.get('/api/me', async (req, res) => {
   res.json({ username: t.username });
 });
 
+// ==================== 用户认证中间件 ====================
+async function authMiddleware(req, res, next) {
+  const h = req.headers.authorization || '';
+  const token = h.replace('Bearer ', '');
+  const t = await Token.findOne({ token });
+  if (!t) return res.status(401).json({ error: '未登录' });
+  req.username = t.username;
+  next();
+}
+
+// ==================== 排行榜 ====================
+app.get('/api/leaderboard', async (req, res) => {
+  const users = await User.find({ deletedAt: null }).select('username wins losses games').lean();
+  const list = users.map(u => ({
+    username: u.username, wins: u.wins, losses: u.losses, games: u.games,
+    winRate: u.games > 0 ? Math.round(u.wins / u.games * 100) : 0,
+  }));
+  list.sort((a, b) => b.winRate - a.winRate || b.wins - a.wins);
+  res.json(list.slice(0, 20));
+});
+
+// ==================== 用户资料 ====================
+app.get('/api/profile/:username', async (req, res) => {
+  const u = await User.findOne({ username: req.params.username }).lean();
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  const { password, ...info } = u;
+  info.username = req.params.username;
+  info.winRate = u.games > 0 ? Math.round(u.wins / u.games * 100) : 0;
+  info.deleted = !!u.deletedAt;
+  info.reportCount = await Report.countDocuments({ target: req.params.username, status: 'approved' });
+  info.reports = await Report.find({ target: req.params.username }).sort({ time: -1 }).lean();
+  res.json(info);
+});
+
+// ==================== 修改用户名 ====================
+app.post('/api/change-username', authMiddleware, async (req, res) => {
+  const { newUsername, password } = req.body || {};
+  if (!newUsername || !password) return res.json({ error: '请输入新用户名和密码' });
+  if (newUsername.length < 2 || newUsername.length > 10) return res.json({ error: '用户名2-10个字符' });
+  const user = await User.findOne({ username: req.username });
+  if (!user) return res.json({ error: '用户不存在' });
+  const ok = await verifyPw(user.password, password);
+  if (!ok) return res.json({ error: '密码错误' });
+  const exists = await User.findOne({ username: newUsername });
+  if (exists) return res.json({ error: '用户名已存在' });
+  await User.updateOne({ username: req.username }, { username: newUsername });
+  await Token.updateMany({ username: req.username }, { username: newUsername });
+  await Report.updateMany({ reporter: req.username }, { reporter: newUsername });
+  await Report.updateMany({ target: req.username }, { target: newUsername });
+  await Notification.updateMany({ username: req.username }, { username: newUsername });
+  await DM.updateMany({ from: req.username }, { from: newUsername });
+  await DM.updateMany({ to: req.username }, { to: newUsername });
+  await Appeal.updateMany({ username: req.username }, { username: newUsername });
+  const newToken = genToken();
+  await Token.deleteOne({ token: req.headers.authorization.replace('Bearer ', '') });
+  await Token.create({ token: newToken, username: newUsername });
+  res.json({ ok: true, username: newUsername, token: newToken });
+});
+
+// ==================== 修改密码 ====================
+app.post('/api/change-password', authMiddleware, async (req, res) => {
+  const { oldPassword, newPassword } = req.body || {};
+  if (!oldPassword || !newPassword) return res.json({ error: '请输入所有字段' });
+  if (newPassword.length < 4) return res.json({ error: '新密码至少4位' });
+  const user = await User.findOne({ username: req.username });
+  if (!user) return res.json({ error: '用户不存在' });
+  const ok = await verifyPw(user.password, oldPassword);
+  if (!ok) return res.json({ error: '原密码错误' });
+  const hashedPw = await hashPw(newPassword);
+  await User.updateOne({ username: req.username }, { password: hashedPw });
+  res.json({ ok: true });
+});
+
+// ==================== 注销账号 ====================
+app.post('/api/delete-account', authMiddleware, async (req, res) => {
+  const { password } = req.body || {};
+  const user = await User.findOne({ username: req.username });
+  if (!user) return res.json({ error: '用户不存在' });
+  const ok = await verifyPw(user.password, password);
+  if (!ok) return res.json({ error: '密码错误' });
+  await User.updateOne({ username: req.username }, { deletedAt: new Date().toISOString() });
+  await Token.deleteMany({ username: req.username });
+  res.json({ ok: true });
+});
+
+// ==================== 举报 ====================
+app.post('/api/report', authMiddleware, async (req, res) => {
+  const { target, reason, reasonType, screenshot } = req.body || {};
+  if (!target || !reason) return res.status(400).json({ error: '请填写举报信息' });
+  if (target === req.username) return res.status(400).json({ error: '不能举报自己' });
+  const targetUser = await User.findOne({ username: target });
+  if (!targetUser) return res.status(400).json({ error: '用户不存在' });
+  let screenshotPath = '';
+  if (screenshot && screenshot.startsWith('data:image')) {
+    const matches = screenshot.match(/^data:image\/(\w+);base64,(.+)$/);
+    if (matches) {
+      const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+      const filename = `${Date.now()}_${require('crypto').randomBytes(4).toString('hex')}.${ext}`;
+      screenshotPath = `screenshots/${filename}`;
+      fs.writeFileSync(path.join(__dirname, 'data', screenshotPath), Buffer.from(matches[2], 'base64'));
+    }
+  }
+  await Report.create({ id: genId(), reporter: req.username, target, reason, reasonType: reasonType || 'other', screenshot: screenshotPath, status: 'pending', time: new Date().toISOString() });
+  res.json({ ok: true });
+});
+
+// ==================== 撤回举报 ====================
+app.post('/api/report/cancel', authMiddleware, async (req, res) => {
+  const { reportId } = req.body || {};
+  const result = await Report.findOneAndUpdate({ id: reportId, reporter: req.username, status: 'pending' }, { status: 'cancelled' });
+  if (!result) return res.status(400).json({ error: '举报不存在或无法撤回' });
+  res.json({ ok: true });
+});
+
+// ==================== 申诉 ====================
+app.post('/api/appeal', authMiddleware, async (req, res) => {
+  const { reportId, reason } = req.body || {};
+  if (!reportId || !reason) return res.status(400).json({ error: '请填写申诉理由' });
+  const report = await Report.findOne({ id: reportId });
+  if (!report) return res.status(400).json({ error: '举报不存在' });
+  if (report.target !== req.username) return res.status(400).json({ error: '只能申诉针对自己的举报' });
+  const existing = await Appeal.findOne({ reportId });
+  if (existing) return res.status(400).json({ error: '该举报已申诉过' });
+  await Appeal.create({ id: genId(), reportId, username: req.username, reason, status: 'pending', time: new Date().toISOString() });
+  res.json({ ok: true });
+});
+
+// ==================== 我的申诉 ====================
+app.get('/api/appeal/mine', authMiddleware, async (req, res) => {
+  const appeals = await Appeal.find({ username: req.username }).sort({ time: -1 }).limit(20).lean();
+  res.json(appeals);
+});
+
+// ==================== 通知 ====================
+app.get('/api/notifs', authMiddleware, async (req, res) => {
+  const notifs = await Notification.find({ username: req.username }).sort({ time: -1 }).limit(30).lean();
+  res.json({ notifs, unread: notifs.filter(n => !n.read).length });
+});
+
+app.post('/api/notifs/read', authMiddleware, async (req, res) => {
+  const { notifId } = req.body || {};
+  if (notifId) { await Notification.findOneAndUpdate({ id: notifId, username: req.username }, { read: true }); }
+  else { await Notification.updateMany({ username: req.username }, { read: true }); }
+  res.json({ ok: true });
+});
+
+// ==================== 私信 ====================
+app.post('/api/dm/send', authMiddleware, async (req, res) => {
+  const { to, content } = req.body || {};
+  if (!to || !content || !content.trim()) return res.status(400).json({ error: '缺少收件人或内容' });
+  if (to === req.username) return res.status(400).json({ error: '不能给自己发私信' });
+  const target = await User.findOne({ username: to });
+  if (!target) return res.status(400).json({ error: '收件人不存在' });
+  const { text: filteredContent } = filterSensitive(content.trim());
+  await DM.create({ id: genId(), from: req.username, to, content: filteredContent.substring(0, 500), read: false, time: new Date().toISOString() });
+  res.json({ ok: true });
+});
+
+app.get('/api/dm/inbox', authMiddleware, async (req, res) => {
+  const allDms = await DM.find({ $or: [{ from: req.username }, { to: req.username }] }).sort({ time: -1 }).lean();
+  const conversations = new Map();
+  for (const dm of allDms) {
+    const other = dm.from === req.username ? dm.to : dm.from;
+    if (!conversations.has(other)) conversations.set(other, { username: other, lastContent: dm.content, lastTime: dm.time, unread: 0 });
+    if (dm.to === req.username && !dm.read) conversations.get(other).unread++;
+  }
+  res.json({ conversations: Array.from(conversations.values()) });
+});
+
+app.get('/api/dm/conversation/:username', authMiddleware, async (req, res) => {
+  const messages = await DM.find({ $or: [{ from: req.username, to: req.params.username }, { from: req.params.username, to: req.username }] }).sort({ time: 1 }).lean();
+  res.json({ messages });
+});
+
+app.post('/api/dm/read', authMiddleware, async (req, res) => {
+  const { with: withUser } = req.body || {};
+  if (!withUser) return res.status(400).json({ error: '缺少用户名' });
+  await DM.updateMany({ from: withUser, to: req.username, read: false }, { read: true });
+  res.json({ ok: true });
+});
+
+app.get('/api/dm/unread', authMiddleware, async (req, res) => {
+  const count = await DM.countDocuments({ to: req.username, read: false });
+  res.json({ count });
+});
+
 // ==================== WebSocket ====================
 const WS_PING_INTERVAL = 30000;
 const WS_PONG_TIMEOUT = 10000;
