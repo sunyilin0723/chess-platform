@@ -79,6 +79,10 @@ body{font-family:'Microsoft YaHei',sans-serif;background:var(--bg-primary);color
 #ai-difficulty span{color:var(--text-secondary);font-size:13px}
 #ai-difficulty button{padding:8px 14px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-input);color:var(--text-secondary);cursor:pointer;font-size:13px}
 #ai-difficulty button.selected{border-color:var(--accent-red);color:var(--accent-red)}
+#forbidden-select{display:flex;gap:8px;margin-bottom:16px;justify-content:center;align-items:center}
+#forbidden-select span{color:var(--text-secondary);font-size:13px}
+#forbidden-select button{padding:8px 14px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-input);color:var(--text-secondary);cursor:pointer;font-size:13px}
+#forbidden-select button.selected{border-color:var(--accent-yellow);color:var(--accent-yellow)}
 #game-view .center-page{justify-content:flex-start;padding-top:8px}
 #players-info{display:flex;align-items:center;justify-content:center;gap:16px;margin:6px 0;font-size:15px}
 .p-name{padding:4px 12px;border-radius:8px;background:var(--bg-secondary);border:2px solid var(--border-color)}

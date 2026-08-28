@@ -2,6 +2,100 @@
 
 function createGomokuBoard(size) { return Array.from({ length: size }, () => Array(size).fill(0)); }
 
+// ==================== 禁手检测 ====================
+// 检测某个方向的连子数和类型
+function countLine(board, r, c, dr, dc, color, size) {
+  let count = 1, openEnds = 0;
+  // 正方向
+  let i = 1;
+  while (true) {
+    const nr = r + dr * i, nc = c + dc * i;
+    if (nr < 0 || nr >= size || nc < 0 || nc >= size) break;
+    if (board[nr][nc] === color) { count++; i++; }
+    else if (board[nr][nc] === 0) { openEnds++; break; }
+    else break;
+  }
+  // 反方向
+  i = 1;
+  while (true) {
+    const nr = r - dr * i, nc = c - dc * i;
+    if (nr < 0 || nr >= size || nc < 0 || nc >= size) break;
+    if (board[nr][nc] === color) { count++; i++; }
+    else if (board[nr][nc] === 0) { openEnds++; break; }
+    else break;
+  }
+  return { count, openEnds };
+}
+
+// 检测是否是活三（两端都能延伸成活四的三）
+function isOpenThree(board, r, c, color, size) {
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  let threeCount = 0;
+  for (const [dr, dc] of dirs) {
+    const { count, openEnds } = countLine(board, r, c, dr, dc, color, size);
+    if (count === 3 && openEnds === 2) threeCount++;
+  }
+  return threeCount;
+}
+
+// 检测是否是四（能形成五子的四）
+function isFour(board, r, c, color, size) {
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  let fourCount = 0;
+  for (const [dr, dc] of dirs) {
+    const { count, openEnds } = countLine(board, r, c, dr, dc, color, size);
+    if (count === 4 && openEnds >= 1) fourCount++;
+  }
+  return fourCount;
+}
+
+// 检测长连（超过五子的连珠）
+function isOverline(board, r, c, color, size) {
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  for (const [dr, dc] of dirs) {
+    const { count } = countLine(board, r, c, dr, dc, color, size);
+    if (count > 5) return true;
+  }
+  return false;
+}
+
+// 检查是否是禁手（只对黑棋/color=1生效）
+function isForbiddenMove(board, r, c, color) {
+  if (color !== 1) return false; // 禁手只针对黑棋
+
+  // 先临时落子
+  board[r][c] = color;
+
+  // 长连禁手
+  if (isOverline(board, r, c, color, 15)) {
+    board[r][c] = 0;
+    return { forbidden: true, type: '长连禁手' };
+  }
+
+  // 五连不算禁手（五连优先）
+  if (checkGomokuWin(board, r, c, color)) {
+    board[r][c] = 0;
+    return false;
+  }
+
+  // 四四禁手
+  const fourCount = isFour(board, r, c, color, 15);
+  if (fourCount >= 2) {
+    board[r][c] = 0;
+    return { forbidden: true, type: '四四禁手' };
+  }
+
+  // 三三禁手
+  const threeCount = isOpenThree(board, r, c, color, 15);
+  if (threeCount >= 2) {
+    board[r][c] = 0;
+    return { forbidden: true, type: '三三禁手' };
+  }
+
+  board[r][c] = 0;
+  return false;
+}
+
 function checkGomokuWin(board, r, c, color) {
   const dirs = [[0,1],[1,0],[1,1],[1,-1]];
   for (const [dr, dc] of dirs) {
@@ -160,4 +254,4 @@ function getAIMove(board, aiColor, difficulty, size) {
   return bestMove || [7, 7];
 }
 
-module.exports = { createGomokuBoard, checkGomokuWin, getAIMove };
+module.exports = { createGomokuBoard, checkGomokuWin, getAIMove, isForbiddenMove };

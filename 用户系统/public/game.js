@@ -1,12 +1,12 @@
 const CELL=36,PAD=28;
-let selectedGame='gomoku',selectedTimer=0,selectedMode='pvp',selectedDifficulty='easy';
+let selectedGame='gomoku',selectedTimer=0,selectedMode='pvp',selectedDifficulty='easy',selectedForbidden=false;
 let token=localStorage.getItem('gomoku_token')||'';
 let currentUser=localStorage.getItem('gomoku_user')||'';
 let ws,myColor=0,turn=0,gameOver=false,gameType='gomoku',boardSize=15;
 let board=[],lastMove=null,playerNames={};
 let timerSeconds=0,timeLeft=[0,0];
 let reportScreenshot='';
-let isAI=false,aiColor=0;
+let isAI=false,aiColor=0,forbiddenRule=false;
 
 // HTML安全转义
 function escapeHtml(str){
@@ -24,6 +24,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   // 初始化主题
   const savedTheme=localStorage.getItem('gomoku_theme')||'dark';
   document.documentElement.setAttribute('data-theme',savedTheme);
+  // 初始化禁手选项显示（默认五子棋选中，显示禁手选项）
+  document.getElementById('forbidden-select').style.display='flex';
 });
 
 function showView(name){
@@ -110,7 +112,6 @@ async function logout(){
   showView('auth')
 }
 async function checkLogin(){if(!token)return showView('auth');try{const d=await apiFetch('/api/me');currentUser=d.username||currentUser;localStorage.setItem('gomoku_user',currentUser);document.getElementById('lobby-greeting').textContent='欢迎，'+currentUser;loadNotifs();showView('lobby')}catch{showView('auth')}}
-function selectGame(type,btn){selectedGame=type;document.querySelectorAll('.game-select button').forEach(b=>b.classList.remove('selected'));btn.classList.add('selected')}
 function selectTimer(secs,btn){selectedTimer=secs;document.querySelectorAll('.timer-select button').forEach(b=>b.classList.remove('sel'));btn.classList.add('sel')}
 function selectMode(mode,btn){
   selectedMode=mode;
@@ -124,6 +125,17 @@ function selectDifficulty(diff,btn){
   selectedDifficulty=diff;
   document.querySelectorAll('#ai-difficulty button').forEach(b=>b.classList.remove('selected'));
   btn.classList.add('selected');
+}
+function selectForbidden(forbidden,btn){
+  selectedForbidden=forbidden;
+  document.querySelectorAll('#forbidden-select button').forEach(b=>b.classList.remove('selected'));
+  btn.classList.add('selected');
+}
+function selectGame(type,btn){
+  selectedGame=type;
+  document.querySelectorAll('.game-select button').forEach(b=>b.classList.remove('selected'));
+  btn.classList.add('selected');
+  document.getElementById('forbidden-select').style.display=type==='gomoku'?'flex':'none';
 }
 function joinRoom(){
   let roomId=document.getElementById('room-input').value.trim()||'default';

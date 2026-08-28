@@ -84,6 +84,11 @@
         <button onclick="selectDifficulty('medium',this)">普通</button>
         <button onclick="selectDifficulty('hard',this)">困难</button>
       </div>
+      <div id="forbidden-select" style="display:none">
+        <span>禁手规则：</span>
+        <button class="selected" onclick="selectForbidden(false,this)">无禁手</button>
+        <button onclick="selectForbidden(true,this)">有禁手</button>
+      </div>
       <input type="text" id="room-input" placeholder="输入房间号" value="default">
       <button onclick="joinRoom()">加入房间</button>
     </div>

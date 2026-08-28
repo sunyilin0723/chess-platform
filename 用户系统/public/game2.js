@@ -4,18 +4,18 @@ let connectOptions = {};
 
 function connect(roomId,mode,difficulty){
   document.getElementById('chat-msgs').innerHTML='';
-  connectOptions = {roomId, mode, difficulty};
+  connectOptions = {roomId, mode, difficulty, forbidden: selectedForbidden};
   reconnectAttempts = 0;
   backToLobbyCalled = false;
-  doConnect(roomId, mode, difficulty);
+  doConnect(roomId, mode, difficulty, selectedForbidden);
 }
 
-function doConnect(roomId, mode, difficulty){
+function doConnect(roomId, mode, difficulty, forbidden){
   const proto=location.protocol==='https:'?'wss':'ws';
   ws=new WebSocket(`${proto}://${location.host}`);
   ws.onopen=()=>{
     reconnectAttempts = 0;
-    ws.send(JSON.stringify({type:'join',room:selectedGame+'_'+roomId,name:currentUser,token,gameType:selectedGame,timerSeconds:selectedTimer,mode:mode||'pvp',difficulty:difficulty||'easy'}));
+    ws.send(JSON.stringify({type:'join',room:selectedGame+'_'+roomId,name:currentUser,token,gameType:selectedGame,timerSeconds:selectedTimer,mode:mode||'pvp',difficulty:difficulty||'easy',forbidden:forbidden||false}));
   };
   ws.onmessage=(e)=>{
     const msg=JSON.parse(e.data);
