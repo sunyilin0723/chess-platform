@@ -440,6 +440,10 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'color_swapped', color: 2 }));
         if (p2.ws) p2.ws.send(JSON.stringify({ type: 'color_swapped', color: 1 }));
         broadcast(currentRoom, { type: 'names', names: currentRoom.names, gameType: currentRoom.gameType });
+        // 人机对战：swap后更新aiColor
+        if (currentRoom.mode === 'pve' && currentRoom.aiColor) {
+          currentRoom.aiColor = currentRoom.aiColor === 1 ? 2 : 1;
+        }
       }
       currentRoom.turn = 1; currentRoom.moveCount = 0;
       broadcast(currentRoom, { type: 'start', turn: 1 });
@@ -823,16 +827,23 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     if (currentRoom) {
-      const myColor = getPlayerColor(currentRoom, ws);
-      currentRoom.players = currentRoom.players.filter(p => p.ws !== ws);
-      if (!currentRoom.gameOver && myColor) {
-        currentRoom.gameOver = true; stopTimer(currentRoom);
-        const winner = myColor === 1 ? 2 : 1;
-        const wName = currentRoom.names[winner], lName = currentRoom.names[myColor];
-        broadcast(currentRoom, { type: 'game_over', winner, reason: '对手离开', winnerName: wName, loserName: lName });
-        if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), currentRoom.gameType);
+      // 人机对战房间：玩家离开直接删除房间
+      if (currentRoom.mode === 'pve') {
+        currentRoom.gameOver = true;
+        cleanupRoom(currentRoom);
+        rooms.delete(currentRoom.id);
+      } else {
+        const myColor = getPlayerColor(currentRoom, ws);
+        currentRoom.players = currentRoom.players.filter(p => p.ws !== ws);
+        if (!currentRoom.gameOver && myColor) {
+          currentRoom.gameOver = true; stopTimer(currentRoom);
+          const winner = myColor === 1 ? 2 : 1;
+          const wName = currentRoom.names[winner], lName = currentRoom.names[myColor];
+          broadcast(currentRoom, { type: 'game_over', winner, reason: '对手离开', winnerName: wName, loserName: lName });
+          if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), currentRoom.gameType);
+        }
+        if (currentRoom.players.length === 0) { cleanupRoom(currentRoom); rooms.delete(currentRoom.id); }
       }
-      if (currentRoom.players.length === 0) { cleanupRoom(currentRoom); rooms.delete(currentRoom.id); }
     }
   });
 });

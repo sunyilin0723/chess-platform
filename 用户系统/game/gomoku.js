@@ -27,13 +27,51 @@ function countLine(board, r, c, dr, dc, color, size) {
   return { count, openEnds };
 }
 
+// 检测某个方向是否是活三
+// 活三：三颗连子，两端都有空位，且延伸后能形成活四
+function isOpenThreeAt(board, r, c, dr, dc, color, size) {
+  const { count, openEnds } = countLine(board, r, c, dr, dc, color, size);
+  if (count !== 3 || openEnds !== 2) return false;
+  
+  // 检查延伸后是否能形成活四（两端都有空位的四）
+  // 正方向延伸
+  let canFormFour1 = false;
+  for (let i = 1; i <= 3; i++) {
+    const nr = r + dr * i, nc = c + dc * i;
+    if (nr < 0 || nr >= size || nc < 0 || nc >= size) break;
+    if (board[nr][nc] === 0) {
+      // 假设在此落子
+      board[nr][nc] = color;
+      const { count: c4, openEnds: o4 } = countLine(board, nr, nc, dr, dc, color, size);
+      board[nr][nc] = 0;
+      if (c4 === 4 && o4 >= 1) { canFormFour1 = true; break; }
+      break;
+    }
+  }
+  
+  // 反方向延伸
+  let canFormFour2 = false;
+  for (let i = 1; i <= 3; i++) {
+    const nr = r - dr * i, nc = c - dc * i;
+    if (nr < 0 || nr >= size || nc < 0 || nc >= size) break;
+    if (board[nr][nc] === 0) {
+      board[nr][nc] = color;
+      const { count: c4, openEnds: o4 } = countLine(board, nr, nc, dr, dc, color, size);
+      board[nr][nc] = 0;
+      if (c4 === 4 && o4 >= 1) { canFormFour2 = true; break; }
+      break;
+    }
+  }
+  
+  return canFormFour1 || canFormFour2;
+}
+
 // 检测是否是活三（两端都能延伸成活四的三）
 function isOpenThree(board, r, c, color, size) {
   const dirs = [[0,1],[1,0],[1,1],[1,-1]];
   let threeCount = 0;
   for (const [dr, dc] of dirs) {
-    const { count, openEnds } = countLine(board, r, c, dr, dc, color, size);
-    if (count === 3 && openEnds === 2) threeCount++;
+    if (isOpenThreeAt(board, r, c, dr, dc, color, size)) threeCount++;
   }
   return threeCount;
 }
@@ -66,16 +104,16 @@ function isForbiddenMove(board, r, c, color) {
   // 先临时落子
   board[r][c] = color;
 
-  // 长连禁手
-  if (isOverline(board, r, c, color, 15)) {
-    board[r][c] = 0;
-    return { forbidden: true, type: '长连禁手' };
-  }
-
   // 五连不算禁手（五连优先）
   if (checkGomokuWin(board, r, c, color)) {
     board[r][c] = 0;
     return false;
+  }
+
+  // 长连禁手
+  if (isOverline(board, r, c, color, 15)) {
+    board[r][c] = 0;
+    return { forbidden: true, type: '长连禁手' };
   }
 
   // 四四禁手
