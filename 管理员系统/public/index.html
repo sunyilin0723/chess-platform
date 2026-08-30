@@ -75,13 +75,16 @@ body { font-family: 'Microsoft YaHei', sans-serif; background: #0f1923; color: #
     <span data-page="gamelog" onclick="showPage('gamelog')">对局记录</span>
     <span data-page="chatlog" onclick="showPage('chatlog')">聊天日志</span>
     <span data-page="user" onclick="showPage('user')">用户查询</span>
+    <span data-page="admins" onclick="showPage('admins')">管理员</span>
+    <span onclick="adminLogout()" style="color:#e74c3c;">退出</span>
   </div>
 </div>
 
 <div id="login-overlay" style="display:flex;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:1000;align-items:center;justify-content:center;">
   <div style="background:#16213e;border-radius:12px;padding:32px;width:360px;text-align:center;">
     <h2 style="margin-bottom:20px;">管理员登录</h2>
-    <input type="password" id="admin-key-input" placeholder="请输入管理密钥" style="width:100%;padding:12px 14px;font-size:15px;border:1px solid #5c9ded;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;margin-bottom:16px;">
+    <input type="text" id="admin-username" placeholder="用户名" style="width:100%;padding:12px 14px;font-size:15px;border:1px solid #5c9ded;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;margin-bottom:12px;">
+    <input type="password" id="admin-password" placeholder="密码" style="width:100%;padding:12px 14px;font-size:15px;border:1px solid #5c9ded;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;margin-bottom:16px;">
     <button onclick="adminLogin()" style="width:100%;padding:12px;background:#0f3460;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:15px;">登录</button>
     <div id="login-error" style="color:#e74c3c;font-size:13px;margin-top:10px;"></div>
   </div>
@@ -146,6 +149,29 @@ body { font-family: 'Microsoft YaHei', sans-serif; background: #0f1923; color: #
   </div>
 </div>
 
+<div id="page-admins" class="page">
+  <h2>管理员管理</h2>
+  <div id="admin-no-permission" style="display:none;padding:20px;background:#16213e;border-radius:10px;border:1px solid #222;color:#888;text-align:center;">
+    仅主管理员可以管理其他管理员
+  </div>
+  <div id="admin-manage-panel" style="display:none;">
+    <div style="display:flex;gap:16px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:300px;">
+        <h3 style="margin-bottom:12px;font-size:16px;">添加管理员</h3>
+        <div style="background:#16213e;border-radius:10px;padding:16px;border:1px solid #222;">
+          <input id="new-admin-name" placeholder="输入用户名" style="width:100%;padding:10px 12px;font-size:14px;border:1px solid #5c9ded;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;margin-bottom:12px;">
+          <button onclick="addAdmin()" style="width:100%;padding:10px;background:#0f3460;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;">添加管理员</button>
+          <div id="admin-msg" style="color:#888;font-size:12px;margin-top:8px;"></div>
+        </div>
+      </div>
+      <div style="flex:1;min-width:300px;">
+        <h3 style="margin-bottom:12px;font-size:16px;">管理员列表</h3>
+        <div id="admins-list" style="background:#16213e;border-radius:10px;padding:16px;border:1px solid #222;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const reportTypeNames = { boost: '刷胜率/放水', cheat: '使用外挂', abuse: '恶意行为', other: '其他' };
 let refreshTimer = null;
@@ -160,24 +186,42 @@ function showPage(name) {
   if (name === 'reports') refreshReports();
   if (name === 'appeals') refreshAppeals();
   if (name === 'gamelog') refreshGameLog();
+  if (name === 'admins') refreshAdmins();
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   if (name === 'rooms') refreshTimer = setInterval(refreshRooms, 3000);
 }
 
-let adminKey = localStorage.getItem('admin_key') || '';
+let adminKey = localStorage.getItem('admin_token') || '';
+let isMainAdmin = localStorage.getItem('admin_is_main') === 'true';
 
-function adminLogin() {
-  const key = document.getElementById('admin-key-input').value.trim();
-  if (!key) { document.getElementById('login-error').textContent = '请输入密钥'; return; }
-  adminKey = key;
-  localStorage.setItem('admin_key', key);
-  document.getElementById('login-overlay').style.display = 'none';
-  refreshRooms();
+async function adminLogin() {
+  const username = document.getElementById('admin-username').value.trim();
+  const password = document.getElementById('admin-password').value;
+  if (!username || !password) { document.getElementById('login-error').textContent = '请输入用户名和密码'; return; }
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (data.error) { document.getElementById('login-error').textContent = data.error; return; }
+    adminKey = data.token;
+    isMainAdmin = data.isMain;
+    localStorage.setItem('admin_token', data.token);
+    localStorage.setItem('admin_user', data.username);
+    localStorage.setItem('admin_is_main', data.isMain);
+    document.getElementById('login-overlay').style.display = 'none';
+    refreshRooms();
+  } catch (e) { document.getElementById('login-error').textContent = '登录失败'; }
 }
 
 function adminLogout() {
   adminKey = '';
-  localStorage.removeItem('admin_key');
+  isMainAdmin = false;
+  localStorage.removeItem('admin_token');
+  localStorage.removeItem('admin_user');
+  localStorage.removeItem('admin_is_main');
   location.reload();
 }
 
@@ -197,9 +241,11 @@ async function apiFetch(path, opts) {
   const data = await res.json();
   if (res.status === 401 || res.status === 403) {
     adminKey = '';
-    localStorage.removeItem('admin_key');
+    localStorage.removeItem('admin_token');
+    localStorage.removeItem('admin_user');
+    localStorage.removeItem('admin_is_main');
     document.getElementById('login-overlay').style.display = 'flex';
-    document.getElementById('login-error').textContent = '密钥无效或已过期，请重新登录';
+    document.getElementById('login-error').textContent = '登录已过期，请重新登录';
     throw new Error('认证失败');
   }
   return data;
@@ -290,18 +336,221 @@ async function refreshGameLog() {
     const data = await apiFetch('/api/game-log?days=' + days);
     if (!data.games || !data.games.length) { el.innerHTML = '<div class="empty-msg">近' + days + '天暂无对局记录</div>'; return; }
     el.innerHTML = `<div style="margin-bottom:12px;color:#888;font-size:14px;">共 ${data.total} 场对局</div>` +
-      data.games.map(g => {
+      data.games.map((g, idx) => {
         const time = new Date(g.time).toLocaleString('zh-CN');
         const winnerColor = g.winner === 1 ? '黑' : g.winner === 2 ? '白' : '平';
+        const gameTypeName = { gomoku: '五子棋', go: '围棋', chess: '象棋' }[g.gameType] || g.gameType;
         return `<div style="padding:10px 14px;background:#16213e;border-radius:8px;margin-bottom:6px;border:1px solid #222;">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleGameDetail(${idx})">
             <span style="font-weight:bold;">${g.winner} ${winnerColor}胜</span>
+            <span style="color:#888;font-size:12px;">[${gameTypeName}]</span>
             <span style="color:#666;font-size:12px;">${time}</span>
+            <span id="arrow-${idx}" style="color:#5c9ded;font-size:14px;transition:transform 0.2s;">▶</span>
           </div>
           <div style="font-size:13px;color:#aaa;margin-top:4px;">${g.loser} 负 · ${g.totalMoves}手</div>
+          <div id="detail-${idx}" style="display:none;margin-top:12px;padding:12px;background:#0d1b3e;border-radius:6px;">
+          </div>
         </div>`;
       }).join('');
   } catch { el.innerHTML = '<div class="empty-msg">加载失败</div>'; }
+}
+
+let gameData = [];
+async function toggleGameDetail(idx) {
+  const detail = document.getElementById('detail-' + idx);
+  const arrow = document.getElementById('arrow-' + idx);
+  if (detail.style.display === 'none') {
+    detail.style.display = 'block';
+    arrow.style.transform = 'rotate(90deg)';
+    if (!detail.innerHTML.trim()) {
+      const data = await apiFetch('/api/game-log?days=365');
+      const g = data.games[idx];
+      if (g) {
+        gameData[idx] = g;
+        detail.innerHTML = `
+          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+            <div>
+              <canvas id="board-canvas-${idx}" width="300" height="300" style="border-radius:6px;background:#c8a96e;"></canvas>
+              <div style="display:flex;gap:8px;margin-top:8px;justify-content:center;">
+                <button onclick="boardPrev(${idx})" style="padding:6px 16px;background:#0f3460;color:#fff;border:none;border-radius:4px;cursor:pointer;">◀ 上一步</button>
+                <span id="move-info-${idx}" style="color:#aaa;font-size:13px;line-height:32px;">0/0</span>
+                <button onclick="boardNext(${idx})" style="padding:6px 16px;background:#0f3460;color:#fff;border:none;border-radius:4px;cursor:pointer;">下一步 ▶</button>
+              </div>
+            </div>
+            <div style="flex:1;min-width:200px;max-height:300px;overflow-y:auto;">
+              ${formatMoves(g.moves, g.gameType)}
+            </div>
+          </div>`;
+        window['boardStep_' + idx] = 0;
+        drawReplayBoard(idx, 0);
+      }
+    }
+  } else {
+    detail.style.display = 'none';
+    arrow.style.transform = 'rotate(0deg)';
+  }
+}
+
+function boardPrev(idx) {
+  let step = (window['boardStep_' + idx] || 1) - 1;
+  if (step < 0) step = 0;
+  window['boardStep_' + idx] = step;
+  drawReplayBoard(idx, step);
+}
+
+function boardNext(idx) {
+  const g = gameData[idx];
+  if (!g || !g.moves) return;
+  let step = (window['boardStep_' + idx] || 0) + 1;
+  if (step > g.moves.length) step = g.moves.length;
+  window['boardStep_' + idx] = step;
+  drawReplayBoard(idx, step);
+}
+
+function drawReplayBoard(idx, step) {
+  const g = gameData[idx];
+  if (!g) return;
+  const canvas = document.getElementById('board-canvas-' + idx);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const size = g.gameType === 'chess' ? null : (g.gameType === 'go' ? 19 : 15);
+  const cellSize = g.gameType === 'chess' ? 30 : (size === 19 ? 14 : 18);
+
+  if (g.gameType === 'chess') {
+    canvas.width = 306; canvas.height = 340;
+    drawChessBoard(ctx, canvas.width, canvas.height);
+    const board = initChessBoard();
+    for (let i = 0; i < step && i < g.moves.length; i++) {
+      const m = g.moves[i];
+      if (m.fr !== undefined) {
+        const piece = board[m.fr][m.fc];
+        board[m.tr][m.tc] = piece;
+        board[m.fr][m.fc] = '';
+      }
+    }
+    drawChessPieces(ctx, board, 33, 33, 30);
+    if (step > 0 && g.moves[step-1] && g.moves[step-1].tr !== undefined) {
+      const m = g.moves[step-1];
+      ctx.strokeStyle = '#f44'; ctx.lineWidth = 2;
+      ctx.strokeRect(33 + m.tc * 30 - 2, 33 + m.tr * 30 - 2, 24, 24);
+    }
+  } else {
+    const totalSize = cellSize * (size - 1) + 56;
+    canvas.width = canvas.height = totalSize;
+    ctx.fillStyle = '#c8a96e'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#6b5230'; ctx.lineWidth = 1;
+    for (let i = 0; i < size; i++) {
+      ctx.beginPath(); ctx.moveTo(28, 28 + i * cellSize); ctx.lineTo(28 + (size-1) * cellSize, 28 + i * cellSize); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(28 + i * cellSize, 28); ctx.lineTo(28 + i * cellSize, 28 + (size-1) * cellSize); ctx.stroke();
+    }
+    const board = initBoard(size);
+    let lastR = -1, lastC = -1;
+    for (let i = 0; i < step && i < g.moves.length; i++) {
+      const m = g.moves[i];
+      if (m.r !== undefined && m.c !== undefined) {
+        board[m.r][m.c] = m.color;
+        lastR = m.r; lastC = m.c;
+      }
+    }
+    const stoneR = cellSize * 0.43;
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        if (board[r][c]) {
+          const x = 28 + c * cellSize, y = 28 + r * cellSize;
+          ctx.beginPath(); ctx.arc(x, y, stoneR, 0, Math.PI * 2);
+          const g2 = ctx.createRadialGradient(x - stoneR * 0.2, y - stoneR * 0.2, stoneR * 0.1, x, y, stoneR);
+          if (board[r][c] === 1) { g2.addColorStop(0, '#444'); g2.addColorStop(1, '#000'); }
+          else { g2.addColorStop(0, '#fff'); g2.addColorStop(1, '#ccc'); }
+          ctx.fillStyle = g2; ctx.fill();
+        }
+      }
+    }
+    if (lastR >= 0) {
+      ctx.beginPath(); ctx.arc(28 + lastC * cellSize, 28 + lastR * cellSize, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#f44'; ctx.fill();
+    }
+  }
+  const info = document.getElementById('move-info-' + idx);
+  if (info) info.textContent = step + '/' + (g.moves ? g.moves.length : 0);
+}
+
+function initBoard(size) { return Array.from({ length: size }, () => Array(size).fill(0)); }
+function initChessBoard() {
+  const b = Array.from({ length: 10 }, () => Array(9).fill(''));
+  b[0] = ['R','N','B','A','K','A','B','N','R'];
+  b[2][1] = 'C'; b[2][7] = 'C';
+  for (let c = 0; c < 9; c += 2) b[3][c] = 'P';
+  b[9] = ['r','n','b','a','k','a','b','n','r'];
+  b[7][1] = 'c'; b[7][7] = 'c';
+  for (let c = 0; c < 9; c += 2) b[6][c] = 'p';
+  return b;
+}
+
+function drawChessBoard(ctx, w, h) {
+  const cw = 30, ox = 33, oy = 33;
+  ctx.fillStyle = '#c8a96e'; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = '#6b5230'; ctx.lineWidth = 1;
+  // 横线
+  for (let r = 0; r < 10; r++) {
+    ctx.beginPath(); ctx.moveTo(ox, oy + r * cw); ctx.lineTo(ox + 8 * cw, oy + r * cw); ctx.stroke();
+  }
+  // 竖线（完整竖线）
+  for (let c = 0; c < 9; c++) {
+    if (c === 0 || c === 8) {
+      ctx.beginPath(); ctx.moveTo(ox + c * cw, oy); ctx.lineTo(ox + c * cw, oy + 9 * cw); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.moveTo(ox + c * cw, oy); ctx.lineTo(ox + c * cw, oy + 4 * cw); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ox + c * cw, oy + 5 * cw); ctx.lineTo(ox + c * cw, oy + 9 * cw); ctx.stroke();
+    }
+  }
+  // 九宫斜线
+  ctx.beginPath(); ctx.moveTo(ox + 3 * cw, oy); ctx.lineTo(ox + 5 * cw, oy + 2 * cw); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ox + 5 * cw, oy); ctx.lineTo(ox + 3 * cw, oy + 2 * cw); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ox + 3 * cw, oy + 7 * cw); ctx.lineTo(ox + 5 * cw, oy + 9 * cw); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ox + 5 * cw, oy + 7 * cw); ctx.lineTo(ox + 3 * cw, oy + 9 * cw); ctx.stroke();
+  // 楚河汉界
+  ctx.font = 'bold 14px "KaiTi","SimKai",serif';
+  ctx.fillStyle = '#6b5230'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('楚 河', ox + 2 * cw, oy + 4.5 * cw);
+  ctx.fillText('漢 界', ox + 6 * cw, oy + 4.5 * cw);
+}
+
+function drawChessPieces(ctx, board, ox, oy, cw) {
+  const pieceNames = { K:'將',A:'士',B:'象',N:'馬',R:'車',C:'砲',P:'卒',k:'帥',a:'仕',b:'相',n:'馬',r:'車',c:'炮',p:'兵' };
+  for (let r = 0; r < 10; r++) {
+    for (let c = 0; c < 9; c++) {
+      const p = board[r][c];
+      if (!p) continue;
+      const x = ox + c * cw, y = oy + r * cw;
+      const isRed = p === p.toLowerCase();
+      ctx.beginPath(); ctx.arc(x, y, 13, 0, Math.PI * 2);
+      ctx.fillStyle = '#f5ead0'; ctx.fill(); ctx.strokeStyle = '#8b7050'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.font = 'bold 15px "KaiTi","SimKai",serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = isRed ? '#c83830' : '#2a3a28';
+      ctx.fillText(pieceNames[p] || '', x, y);
+    }
+  }
+}
+
+function formatMoves(moves, gameType) {
+  if (!moves || !moves.length) return '<div style="color:#666;">无棋谱记录</div>';
+  const pieceNames = { K:'将',A:'士',B:'象',N:'马',R:'车',C:'炮',P:'卒',k:'帅',a:'仕',b:'相',n:'马',r:'车',c:'炮',p:'兵' };
+  return '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+    '<tr style="color:#888;border-bottom:1px solid #333;"><th style="padding:4px;text-align:left;">#</th><th style="padding:4px;text-align:left;">棋手</th><th style="padding:4px;text-align:left;">走法</th></tr>' +
+    moves.map((m, i) => {
+      const color = m.color === 1 ? '黑' : '白';
+      const colorStyle = m.color === 1 ? 'color:#ddd;' : 'color:#f0c040;';
+      let moveStr = '';
+      if (gameType === 'gomoku' || gameType === 'go') {
+        moveStr = `(${m.r},${m.c})`;
+      } else if (gameType === 'chess') {
+        const piece = m.captured ? pieceNames[m.captured] || m.captured : '';
+        moveStr = `(${m.fr},${m.fc})→(${m.tr},${m.tc})${piece ? '吃' + piece : ''}`;
+      }
+      if (m.type === 'pass') moveStr = 'Pass';
+      return `<tr style="border-bottom:1px solid #222;"><td style="padding:4px;color:#666;">${i + 1}</td><td style="padding:4px;${colorStyle}">${color}</td><td style="padding:4px;">${moveStr}</td></tr>`;
+    }).join('') +
+    '</table>';
 }
 
 async function refreshChatLog() {
@@ -438,7 +687,7 @@ async function searchUser() {
       <div style="font-size:13px;color:#888;margin-bottom:8px;">总场: ${u.games} | 举报数: ${u.reports ? u.reports.length : 0}</div>
       ${reportsHtml}
       ${u.deleted ? '<div style="padding:6px 12px;background:#5c2a2a22;border:1px solid #5c2a2a;border-radius:6px;font-size:13px;color:#e74c3c;margin-bottom:8px;">该用户已注销</div>' : ''}
-      <button onclick="forceDelete('${u.username}')" style="width:100%;padding:10px;background:#5c2a2a;color:#e74c3c;border:none;border-radius:6px;cursor:pointer;font-size:14px;">彻底注销（删除所有数据）</button>
+      ${isMainAdmin ? `<button onclick="forceDelete('${u.username}')" style="width:100%;padding:10px;background:#5c2a2a;color:#e74c3c;border:none;border-radius:6px;cursor:pointer;font-size:14px;">彻底注销（删除所有数据）</button>` : '<div style="color:#666;font-size:12px;margin-top:8px;">仅主管理员可执行注销操作</div>'}
     `;
   } catch (e) { el.innerHTML = `<div style="color:#e74c3c;">${e.message}</div>`; }
 }
@@ -451,6 +700,56 @@ async function forceDelete(username) {
     alert('用户已彻底删除');
     document.getElementById('user-detail').innerHTML = '';
     document.getElementById('search-user').value = '';
+  } catch (e) { alert(e.message); }
+}
+
+// ==================== 管理员管理 ====================
+async function refreshAdmins() {
+  const el = document.getElementById('admins-list');
+  const managePanel = document.getElementById('admin-manage-panel');
+  const noPermission = document.getElementById('admin-no-permission');
+  if (isMainAdmin) {
+    managePanel.style.display = 'block';
+    noPermission.style.display = 'none';
+  } else {
+    managePanel.style.display = 'none';
+    noPermission.style.display = 'block';
+  }
+  try {
+    const admins = await apiFetch('/api/admins');
+    el.innerHTML = admins.map(a => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#0d1b3e;border-radius:6px;margin-bottom:6px;">
+        <div>
+          <span style="font-weight:bold;">${a.username}</span>
+          ${a.isMain ? '<span style="margin-left:8px;padding:2px 6px;background:#5c2a2a;color:#f0c040;border-radius:4px;font-size:11px;">主管理员</span>' : ''}
+          <span style="margin-left:8px;color:#666;font-size:12px;">创建于 ${new Date(a.createdAt).toLocaleDateString('zh-CN')}</span>
+        </div>
+        ${isMainAdmin && !a.isMain ? `<button onclick="deleteAdmin('${a.username}')" style="padding:4px 12px;background:#5c2a2a;color:#e74c3c;border:none;border-radius:4px;cursor:pointer;font-size:12px;">删除</button>` : ''}
+      </div>
+    `).join('');
+  } catch { el.innerHTML = '<div style="color:#888;">加载失败</div>'; }
+}
+
+async function addAdmin() {
+  const username = document.getElementById('new-admin-name').value.trim();
+  const msgEl = document.getElementById('admin-msg');
+  if (!username) { msgEl.textContent = '请输入用户名'; msgEl.style.color = '#e74c3c'; return; }
+  try {
+    const r = await apiFetch('/api/admins/add', { method: 'POST', body: JSON.stringify({ username }) });
+    if (r.error) { msgEl.textContent = r.error; msgEl.style.color = '#e74c3c'; return; }
+    msgEl.textContent = r.msg;
+    msgEl.style.color = '#2ecc71';
+    document.getElementById('new-admin-name').value = '';
+    refreshAdmins();
+  } catch (e) { msgEl.textContent = '添加失败'; msgEl.style.color = '#e74c3c'; }
+}
+
+async function deleteAdmin(username) {
+  if (!confirm(`确定要删除管理员 "${username}"？`)) return;
+  try {
+    const r = await apiFetch('/api/admins/delete', { method: 'POST', body: JSON.stringify({ username }) });
+    if (r.error) { alert(r.error); return; }
+    refreshAdmins();
   } catch (e) { alert(e.message); }
 }
 

@@ -859,7 +859,7 @@ const heartbeatInterval = setInterval(() => {
 wss.on('close', () => clearInterval(heartbeatInterval));
 
 // ==================== 管理员API ====================
-const ADMIN_KEY = process.env.ADMIN_KEY;
+const ADMIN_KEY = process.env.ADMIN_KEY || require('crypto').randomBytes(16).toString('hex');
 function adminAuth(req, res, next) {
   const h = req.headers.authorization || '';
   if (h.replace('Bearer ', '') !== ADMIN_KEY) return res.status(403).json({ error: '无管理员权限' });

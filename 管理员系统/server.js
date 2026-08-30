@@ -22,12 +22,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
 const GAME_SERVER = 'http://localhost:' + (process.env.GAME_PORT || '3002');
-const ADMIN_KEY = process.env.ADMIN_KEY;
-if (!ADMIN_KEY) {
-  console.error('错误：请在 .env 文件中设置 ADMIN_KEY');
-  console.error('文件位置：' + envPath);
-  process.exit(1);
-}
+const ADMIN_KEY = process.env.ADMIN_KEY || 'no-key-configured';
 
 // MongoDB 连接
 mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/gomoku')
@@ -118,6 +113,105 @@ const Appeal = mongoose.model('Appeal', appealSchema);
 const Token = mongoose.model('Token', tokenSchema);
 const Notification = mongoose.model('Notification', notifSchema);
 const ChatLog = mongoose.model('ChatLog', chatLogSchema);
+
+// 管理员模型
+const adminSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  isMain: { type: Boolean, default: false },
+  createdAt: { type: String, default: () => new Date().toISOString() }
+}, { collection: 'admins' });
+const Admin = mongoose.model('Admin', adminSchema);
+
+// 初始化主管理员
+async function initMainAdmin() {
+  const mainUser = process.env.ADMIN_USERNAME;
+  const mainPass = process.env.ADMIN_PASSWORD;
+  if (!mainUser || !mainPass) {
+    console.log('未设置主管理员账号，请在 .env 中配置 ADMIN_USERNAME 和 ADMIN_PASSWORD');
+    return;
+  }
+  try {
+    // 清空旧管理员数据，只保留.env配置的主管理员
+    await Admin.deleteMany({});
+    await Admin.create({ username: mainUser, password: mainPass, isMain: true });
+    console.log('主管理员已创建:', mainUser);
+  } catch (e) { console.error('初始化主管理员失败:', e.message); }
+}
+initMainAdmin();
+
+// 管理员登录API
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  console.log('登录请求:', username);
+  if (!username || !password) return res.json({ error: '请输入用户名和密码' });
+  try {
+    const admin = await Admin.findOne({ username });
+    console.log('找到管理员:', admin ? admin.username : 'null');
+    if (!admin) return res.json({ error: '管理员不存在' });
+    if (admin.password !== password) return res.json({ error: '密码错误' });
+    const token = crypto.randomBytes(32).toString('hex');
+    await Token.create({ token, username });
+    res.json({ token, username, isMain: admin.isMain });
+  } catch (e) {
+    console.error('登录错误:', e.message);
+    res.json({ error: '登录失败: ' + e.message });
+  }
+});
+
+app.post('/api/logout', async (req, res) => {
+  const h = req.headers.authorization || '';
+  const token = h.replace('Bearer ', '');
+  if (token) await Token.deleteOne({ token });
+  res.json({ ok: true });
+});
+
+// 管理员认证中间件
+async function adminAuth(req, res, next) {
+  const h = req.headers.authorization || '';
+  const token = h.replace('Bearer ', '');
+  const t = await Token.findOne({ token });
+  if (!t) return res.status(401).json({ error: '未登录' });
+  req.adminUsername = t.username;
+  next();
+}
+
+// 添加管理员（仅主管理员）
+app.post('/api/admins/add', adminAuth, async (req, res) => {
+  const admin = await Admin.findOne({ username: req.adminUsername });
+  if (!admin || !admin.isMain) return res.status(403).json({ error: '只有主管理员可以添加管理员' });
+  const { username } = req.body || {};
+  if (!username) return res.status(400).json({ error: '请输入用户名' });
+  const exists = await Admin.findOne({ username });
+  if (exists) return res.status(400).json({ error: '管理员已存在' });
+  await Admin.create({ username, password: username, isMain: false });
+  res.json({ ok: true, msg: `管理员 ${username} 已添加，初始密码为: ${username}` });
+});
+
+// 删除管理员（仅主管理员）
+app.post('/api/admins/delete', adminAuth, async (req, res) => {
+  const admin = await Admin.findOne({ username: req.adminUsername });
+  if (!admin || !admin.isMain) return res.status(403).json({ error: '只有主管理员可以删除管理员' });
+  const { username } = req.body || {};
+  if (!username) return res.status(400).json({ error: '请输入用户名' });
+  const target = await Admin.findOne({ username });
+  if (!target) return res.status(400).json({ error: '管理员不存在' });
+  if (target.isMain) return res.status(400).json({ error: '不能删除主管理员' });
+  await Admin.deleteOne({ username });
+  res.json({ ok: true });
+});
+
+// 获取管理员列表
+app.get('/api/admins', adminAuth, async (req, res) => {
+  const admins = await Admin.find({}, { password: 0 }).lean();
+  res.json(admins);
+});
+
+// 调试：查看所有管理员（无需认证）
+app.get('/api/debug/admins', async (req, res) => {
+  const admins = await Admin.find().lean();
+  res.json(admins.map(a => ({ username: a.username, isMain: a.isMain })));
+});
 
 function pushNotif(username, title, content) {
   Notification.create({ id: crypto.randomBytes(8).toString('hex'), username, title, content, read: false, time: new Date().toISOString() });
@@ -270,7 +364,12 @@ app.post('/api/appeal/reject', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/force-delete', async (req, res) => {
+app.post('/api/force-delete', adminAuth, async (req, res) => {
+  // 只有主管理员可以注销用户
+  const admin = await Admin.findOne({ username: req.adminUsername });
+  if (!admin || !admin.isMain) {
+    return res.status(403).json({ error: '只有主管理员可以注销用户' });
+  }
   const { username } = req.body || {};
   if (!username) return res.status(400).json({ error: '缺少用户名' });
   await User.deleteOne({ username });
