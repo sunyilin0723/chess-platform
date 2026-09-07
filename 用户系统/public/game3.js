@@ -3,6 +3,7 @@ function getThemeColor(varName){return getComputedStyle(document.documentElement
 
 function drawBoard(){
   if(gameType==='chess')drawChess();
+  else if(gameType==='intl_chess')drawIntlChess();
   else if(gameType==='go')drawGo();
   else drawGomoku();
 }
@@ -160,8 +161,54 @@ function drawChess(){
   window._chessClickBound=chessClickHandler;
   canvas.addEventListener('click',chessClickHandler);
 }
+function drawIntlChess(){
+  const cw=64,ox=40,oy=40;
+  canvas.width=8*cw+ox*2;canvas.height=8*cw+oy*2;
+  const isLight=document.documentElement.getAttribute('data-theme')==='light';
+  ctx.fillStyle=isLight?'#f0e6d2':'#2a1800';ctx.fillRect(0,0,canvas.width,canvas.height);
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    ctx.fillStyle=(r+c)%2===0?(isLight?'#f0d9b5':'#b58863'):(isLight?'#b58863':'#f0d9b5');
+    ctx.fillRect(ox+c*cw,oy+r*cw,cw,cw);
+  }
+  const pieceChars={K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙',k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'};
+  for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+    const p=board[r]&&board[r][c];if(!p)continue;
+    const x=ox+c*cw+cw/2,y=oy+r*cw+cw/2;
+    const isWhite=p===p.toUpperCase();
+    ctx.font=`bold ${cw*0.65}px serif`;ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillStyle=isWhite?'#fff':'#000';
+    ctx.fillText(pieceChars[p]||'',x,y+2);
+  }
+  if(lastMove){
+    const x=ox+lastMove[1]*cw,y=oy+lastMove[0]*cw;
+    ctx.strokeStyle='rgba(220,60,30,0.85)';ctx.lineWidth=3;
+    ctx.strokeRect(x+2,y+2,cw-4,cw-4);
+  }
+}
+canvas.removeEventListener('click',window._intlChessClickBound);
+window._intlChessClickBound=function(e){
+  if(gameOver||myColor!==turn||gameType!=='intl_chess')return;
+  const rect=canvas.getBoundingClientRect();
+  const mx=(e.clientX-rect.left)*(canvas.width/rect.width);
+  const my=(e.clientY-rect.top)*(canvas.height/rect.height);
+  const cw=64,ox=40,oy=40;
+  const c=Math.floor((mx-ox)/cw),r=Math.floor((my-oy)/cw);
+  if(r<0||r>=8||c<0||c>=8)return;
+  if(!window._intlChessSelected){
+    const p=board[r]&&board[r][c];if(!p)return;
+    const pc=p===p.toUpperCase()?1:2;if(pc!==myColor)return;
+    window._intlChessSelected=[r,c];drawBoard();
+    ctx.strokeStyle='#5c9ded';ctx.lineWidth=3;
+    ctx.strokeRect(ox+c*cw+2,oy+r*cw+2,cw-4,cw-4);
+  } else {
+    const [fr,fc]=window._intlChessSelected;window._intlChessSelected=null;
+    if(fr===r&&fc===c){drawBoard();return}
+    ws.send(JSON.stringify({type:'move',fr,fc,tr:r,tc:c}));
+  }
+};
+canvas.addEventListener('click',window._intlChessClickBound);
 canvas.addEventListener('click',e=>{
-  if(gameOver||myColor!==turn||gameType==='chess')return;
+  if(gameOver||myColor!==turn||gameType==='chess'||gameType==='intl_chess')return;
   const rect=canvas.getBoundingClientRect();
   const mx=(e.clientX-rect.left)*(canvas.width/rect.width);
   const my=(e.clientY-rect.top)*(canvas.height/rect.height);
@@ -181,7 +228,7 @@ canvas.addEventListener('click',e=>{
   }
 });
 canvas.addEventListener('mousemove',e=>{
-  if(gameOver||myColor!==turn||gameType==='chess'){canvas.style.cursor='not-allowed';return}
+  if(gameOver||myColor!==turn||gameType==='chess'||gameType==='intl_chess'){canvas.style.cursor='not-allowed';return}
   canvas.style.cursor='pointer';
 });
 
@@ -343,32 +390,229 @@ function loadProfile(username){
     ${u.reportCount>0?`<div class="profile-warn">⚠ 该用户被举报 ${u.reportCount} 次</div>`:''}
     ${!isMe?`<button onclick="openDmConversation('${u.username}')" class="profile-btn-dm">📩 发送私信</button>`:''}
     ${isMe?`
-    <div class="profile-section">
-      <div style="margin-bottom:14px">
-        <label class="profile-label">修改用户名</label>
-        <input type="text" id="new-username" placeholder="新用户名" maxlength="10" class="profile-input">
-        <input type="password" id="username-pw" placeholder="输入密码确认" class="profile-input">
-        <button onclick="changeUsername()" class="profile-btn-primary">修改用户名</button>
+    <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;">
+      <div onclick="toggleProfileSection('security')" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:var(--bg-input);border-radius:10px;cursor:pointer;border:1px solid var(--border-color);">
+        <span style="font-weight:bold;">🔒 账户安全</span>
+        <span id="security-arrow" style="color:var(--text-muted);transition:transform 0.2s;">▶</span>
       </div>
-      <div style="margin-bottom:16px">
-        <label class="profile-label">修改密码</label>
-        <input type="password" id="old-pw" placeholder="原密码" class="profile-input">
-        <input type="password" id="new-pw" placeholder="新密码" class="profile-input">
-        <input type="password" id="new-pw2" placeholder="确认新密码" class="profile-input">
-        <button onclick="changePassword()" class="profile-btn-primary">修改密码</button>
+      <div id="security-section" style="display:none;padding:16px;background:var(--bg-input);border-radius:10px;border:1px solid var(--border-color);">
+        <div style="margin-bottom:14px;">
+          <label class="profile-label">修改用户名</label>
+          <input type="text" id="new-username" placeholder="新用户名" maxlength="10" class="profile-input">
+          <input type="password" id="username-pw" placeholder="输入密码确认" class="profile-input">
+          <button onclick="changeUsername()" class="profile-btn-primary">修改用户名</button>
+        </div>
+        <div style="margin-bottom:16px;">
+          <label class="profile-label">修改密码</label>
+          <input type="password" id="old-pw" placeholder="原密码" class="profile-input">
+          <input type="password" id="new-pw" placeholder="新密码" class="profile-input">
+          <input type="password" id="new-pw2" placeholder="确认新密码" class="profile-input">
+          <button onclick="changePassword()" class="profile-btn-primary">修改密码</button>
+        </div>
+        <div id="settings-msg" style="text-align:center;font-size:13px;min-height:18px;margin-bottom:8px;"></div>
+        <button onclick="deleteAccount()" class="profile-btn-danger">注销账号</button>
       </div>
-      <div id="settings-msg" style="text-align:center;font-size:13px;min-height:18px;margin-bottom:8px"></div>
-      ${(u.banned||u.reportCount>=0)?`
-      <div class="profile-info-box">
-        <div id="my-reports-list"></div>
-        <div id="appeal-history"></div>
-        <div id="appeal-msg" style="text-align:center;font-size:12px;min-height:16px;margin-top:6px"></div>
-      </div>`:''}
-      <button onclick="loadMyReports()" class="profile-btn-secondary">我的举报</button>
-      <button onclick="deleteAccount()" class="profile-btn-danger">注销账号</button>
-    </div>`:''}`;
-    if(isMe&&document.getElementById('appeal-history'))loadAppealHistory();
+
+      <div onclick="toggleProfileSection('games')" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:var(--bg-input);border-radius:10px;cursor:pointer;border:1px solid var(--border-color);">
+        <span style="font-weight:bold;">🎮 最近对局记录</span>
+        <span id="games-arrow" style="color:var(--text-muted);transition:transform 0.2s;">▶</span>
+      </div>
+      <div id="games-section" style="display:none;padding:16px;background:var(--bg-input);border-radius:10px;border:1px solid var(--border-color);">
+        <div id="my-games-list"></div>
+      </div>
+    </div>
+    `:''}`;
   }).catch(()=>{el.innerHTML='<p style="text-align:center;color:var(--text-muted)">加载失败</p>'});
+}
+function toggleProfileSection(name){
+  const section=document.getElementById(name+'-section');
+  const arrow=document.getElementById(name+'-arrow');
+  if(section.style.display==='none'){
+    section.style.display='block';
+    arrow.style.transform='rotate(90deg)';
+    if(name==='games')loadMyGames();
+  }else{
+    section.style.display='none';
+    arrow.style.transform='rotate(0deg)';
+  }
+}
+// 加载我的对局记录
+let myGamesData = [];
+async function loadMyGames(page){
+  const el = document.getElementById('my-games-list');
+  if(!el) return;
+  try {
+    const data = await apiFetch('/api/my-games?page='+(page||1)+'&limit=10');
+    if(!data.games.length){el.innerHTML='<div style="color:var(--text-muted);text-align:center;padding:20px;">暂无对局记录</div>';return}
+    myGamesData = data.games;
+    el.innerHTML = data.games.map((g, idx) => {
+      const time = new Date(g.time).toLocaleString('zh-CN');
+      const gameTypeNames = {gomoku:'五子棋',go:'围棋',chess:'中国象棋',intl_chess:'国际象棋'};
+      const gameName = gameTypeNames[g.gameType] || g.gameType;
+      const isWin = g.winner === currentUser;
+      const opponent = isWin ? g.loser : g.winner;
+      const result = isWin ? '胜' : (g.winner === '平局' ? '平' : '负');
+      const resultColor = isWin ? 'var(--accent-green)' : (g.winner === '平局' ? 'var(--accent-yellow)' : 'var(--accent-red)');
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg-input);border-radius:8px;margin-bottom:6px;cursor:pointer;" onclick="showGameDetail(${idx})">
+        <div>
+          <span style="font-weight:bold;color:${resultColor};">${result}</span>
+          <span style="margin-left:8px;">vs ${escapeHtml(opponent)}</span>
+          <span style="margin-left:8px;color:var(--text-muted);font-size:12px;">[${gameName}]</span>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:12px;color:var(--text-muted);">${g.totalMoves}手</div>
+          <div style="font-size:11px;color:var(--text-muted);">${time}</div>
+        </div>
+      </div>`;
+    }).join('');
+    // 分页
+    if(data.totalPages > 1){
+      let pageHtml = '<div style="display:flex;gap:8px;justify-content:center;margin-top:12px;">';
+      if(data.page > 1) pageHtml += `<button onclick="loadMyGames(${data.page-1})" style="padding:6px 12px;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">上一页</button>`;
+      pageHtml += `<span style="line-height:32px;color:var(--text-muted);font-size:13px;">${data.page}/${data.totalPages}</span>`;
+      if(data.page < data.totalPages) pageHtml += `<button onclick="loadMyGames(${data.page+1})" style="padding:6px 12px;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">下一页</button>`;
+      pageHtml += '</div>';
+      el.innerHTML += pageHtml;
+    }
+  } catch(e){el.innerHTML='<div style="color:var(--accent-red);text-align:center;">加载失败</div>'}
+}
+// 显示对局详情（棋盘回放）
+function showGameDetail(idx){
+  const g = myGamesData[idx];
+  if(!g || !g.moves || !g.moves.length) return;
+  const dialog = document.createElement('div');
+  dialog.id = 'game-detail-dialog';
+  dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:200;display:flex;align-items:center;justify-content:center;';
+  dialog.innerHTML = `
+    <div style="background:var(--bg-card);border-radius:12px;padding:24px;max-width:700px;width:95%;max-height:90vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3>对局详情</h3>
+        <span onclick="document.getElementById('game-detail-dialog').remove()" style="cursor:pointer;font-size:20px;color:var(--text-muted);">✕</span>
+      </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        <div>
+          <canvas id="replay-canvas" width="320" height="320" style="border-radius:6px;"></canvas>
+          <div style="display:flex;gap:8px;margin-top:8px;justify-content:center;">
+            <button onclick="replayPrev()" style="padding:6px 16px;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">◀</button>
+            <span id="replay-info" style="color:var(--text-muted);font-size:13px;line-height:32px;">0/0</span>
+            <button onclick="replayNext()" style="padding:6px 16px;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">▶</button>
+          </div>
+        </div>
+        <div style="flex:1;min-width:200px;max-height:300px;overflow-y:auto;font-size:12px;">
+          <table style="width:100%;border-collapse:collapse;">
+            <tr style="color:var(--text-muted);border-bottom:1px solid var(--border-color);"><th style="padding:4px;text-align:left;">#</th><th style="padding:4px;text-align:left;">棋手</th><th style="padding:4px;text-align:left;">走法</th></tr>
+            ${g.moves.map((m,i)=>{
+              const color = m.color===1?'黑':'白';
+              const colorStyle = m.color===1?'color:#ddd;':'color:var(--accent-yellow);';
+              let moveStr = '';
+              if(g.gameType==='gomoku'||g.gameType==='go') moveStr=`(${m.r},${m.c})`;
+              else if(g.gameType==='chess') moveStr=`(${m.fr},${m.fc})→(${m.tr},${m.tc})`;
+              else if(g.gameType==='intl_chess') moveStr=`(${m.fr},${m.fc})→(${m.tr},${m.tc})`;
+              if(m.type==='pass') moveStr='Pass';
+              return `<tr style="border-bottom:1px solid var(--border-color);"><td style="padding:4px;color:var(--text-muted);">${i+1}</td><td style="padding:4px;${colorStyle}">${color}</td><td style="padding:4px;">${moveStr}</td></tr>`;
+            }).join('')}
+          </table>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(dialog);
+  window._replayGame = g;
+  window._replayStep = 0;
+  drawReplayBoard();
+}
+function replayPrev(){
+  let step = (window._replayStep||1)-1;
+  if(step<0) step=0;
+  window._replayStep=step;
+  drawReplayBoard();
+}
+function replayNext(){
+  const g=window._replayGame;
+  if(!g||!g.moves) return;
+  let step=(window._replayStep||0)+1;
+  if(step>g.moves.length) step=g.moves.length;
+  window._replayStep=step;
+  drawReplayBoard();
+}
+function drawReplayBoard(){
+  const g=window._replayGame;
+  const step=window._replayStep||0;
+  const canvas=document.getElementById('replay-canvas');
+  if(!canvas||!g) return;
+  const ctx=canvas.getContext('2d');
+  const info=document.getElementById('replay-info');
+  if(info) info.textContent=step+'/'+(g.moves?g.moves.length:0);
+  if(g.gameType==='intl_chess'){
+    const cw=36,ox=20,oy=20;
+    canvas.width=8*cw+ox*2;canvas.height=8*cw+oy*2;
+    ctx.fillStyle='#b58863';ctx.fillRect(0,0,canvas.width,canvas.height);
+    for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+      ctx.fillStyle=(r+c)%2===0?'#f0d9b5':'#b58863';
+      ctx.fillRect(ox+c*cw,oy+r*cw,cw,cw);
+    }
+    const board=Array.from({length:8},()=>Array(8).fill(''));
+    board[0]=['r','n','b','q','k','b','n','r'];board[1]=['p','p','p','p','p','p','p','p'];
+    board[6]=['P','P','P','P','P','P','P','P'];board[7]=['R','N','B','Q','K','B','N','R'];
+    for(let i=0;i<step&&i<g.moves.length;i++){
+      const m=g.moves[i];
+      if(m.fr!==undefined){const p=board[m.fr][m.fc];board[m.tr][m.tc]=p;board[m.fr][m.fc]='';}
+    }
+    const pieceChars={K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙',k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'};
+    for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+      const p=board[r][c];if(!p)continue;
+      ctx.font=`bold ${cw*0.65}px serif`;ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillStyle=p===p.toUpperCase()?'#fff':'#000';
+      ctx.fillText(pieceChars[p]||'',ox+c*cw+cw/2,oy+r*cw+cw/2+2);
+    }
+    if(step>0&&g.moves[step-1]){
+      const m=g.moves[step-1];
+      ctx.strokeStyle='rgba(220,60,30,0.85)';ctx.lineWidth=3;
+      ctx.strokeRect(ox+m.tc*cw+2,oy+m.tr*cw+2,cw-4,cw-4);
+    }
+  } else if(g.gameType==='chess'){
+    const cw=30,ox=30,oy=30;
+    canvas.width=8*cw+ox*2;canvas.height=9*cw+oy*2;
+    ctx.fillStyle='#c8a96e';ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.strokeStyle='#6b5230';ctx.lineWidth=1;
+    for(let r=0;r<10;r++){ctx.beginPath();ctx.moveTo(ox,oy+r*cw);ctx.lineTo(ox+8*cw,oy+r*cw);ctx.stroke()}
+    for(let c=0;c<9;c++){if(c===0||c===8){ctx.beginPath();ctx.moveTo(ox+c*cw,oy);ctx.lineTo(ox+c*cw,oy+9*cw);ctx.stroke()}else{ctx.beginPath();ctx.moveTo(ox+c*cw,oy);ctx.lineTo(ox+c*cw,oy+4*cw);ctx.stroke();ctx.beginPath();ctx.moveTo(ox+c*cw,oy+5*cw);ctx.lineTo(ox+c*cw,oy+9*cw);ctx.stroke()}}
+    const board=Array.from({length:10},()=>Array(9).fill(''));
+    board[0]=['R','N','B','A','K','A','B','N','R'];board[2][1]='C';board[2][7]='C';for(let c=0;c<9;c+=2)board[3][c]='P';
+    board[9]=['r','n','b','a','k','a','b','n','r'];board[7][1]='c';board[7][7]='c';for(let c=0;c<9;c+=2)board[6][c]='p';
+    for(let i=0;i<step&&i<g.moves.length;i++){
+      const m=g.moves[i];if(m.fr!==undefined){board[m.tr][m.tc]=board[m.fr][m.fc];board[m.fr][m.fc]='';}
+    }
+    const pieceNames={K:'將',A:'士',B:'象',N:'馬',R:'車',C:'砲',P:'卒',k:'帥',a:'仕',b:'相',n:'馬',r:'車',c:'炮',p:'兵'};
+    for(let r=0;r<10;r++)for(let c=0;c<9;c++){
+      const p=board[r][c];if(!p)continue;
+      const isRed=p===p.toLowerCase();
+      ctx.beginPath();ctx.arc(ox+c*cw,oy+r*cw,13,0,Math.PI*2);ctx.fillStyle='#f5ead0';ctx.fill();ctx.strokeStyle='#8b7050';ctx.lineWidth=1.5;ctx.stroke();
+      ctx.font='bold 15px "KaiTi","SimKai",serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillStyle=isRed?'#c83830':'#2a3a28';ctx.fillText(pieceNames[p]||'',ox+c*cw,oy+r*cw);
+    }
+    if(step>0&&g.moves[step-1]){
+      const m=g.moves[step-1];
+      ctx.strokeStyle='rgba(220,60,30,0.85)';ctx.lineWidth=3;
+      ctx.strokeRect(ox+m.tc*cw-2,oy+m.tr*cw-2,cw+4,cw+4);
+    }
+  } else {
+    // 五子棋/围棋
+    const sz=g.gameType==='go'?19:15;
+    const cellW=Math.min(16,Math.floor(300/(sz-1)));
+    canvas.width=cellW*(sz-1)+56;canvas.height=canvas.width;
+    ctx.fillStyle='#c8a96e';ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.strokeStyle='#6b5230';ctx.lineWidth=1;
+    for(let i=0;i<sz;i++){ctx.beginPath();ctx.moveTo(28,28+i*cellW);ctx.lineTo(28+(sz-1)*cellW,28+i*cellW);ctx.stroke();ctx.beginPath();ctx.moveTo(28+i*cellW,28);ctx.lineTo(28+i*cellW,28+(sz-1)*cellW);ctx.stroke()}
+    const board=Array.from({length:sz},()=>Array(sz).fill(0));let lastR=-1,lastC=-1;
+    for(let i=0;i<step&&i<g.moves.length;i++){
+      const m=g.moves[i];if(m.r!==undefined&&m.c!==undefined){board[m.r][m.c]=m.color;lastR=m.r;lastC=m.c;}
+    }
+    const stoneR=cellW*0.43;
+    for(let r=0;r<sz;r++)for(let c=0;c<sz;c++){
+      if(board[r][c]){const x=28+c*cellW,y=28+r*cellW;ctx.beginPath();ctx.arc(x,y,stoneR,0,Math.PI*2);const g2=ctx.createRadialGradient(x-stoneR*0.2,y-stoneR*0.2,stoneR*0.1,x,y,stoneR);if(board[r][c]===1){g2.addColorStop(0,'#444');g2.addColorStop(1,'#000')}else{g2.addColorStop(0,'#fff');g2.addColorStop(1,'#ccc')}ctx.fillStyle=g2;ctx.fill();}
+    }
+    if(lastR>=0){ctx.beginPath();ctx.arc(28+lastC*cellW,28+lastR*cellW,4,0,Math.PI*2);ctx.fillStyle='#f44';ctx.fill()}
+  }
 }
 function settingsMsg(text,ok){const el=document.getElementById('settings-msg');if(!el)return;el.textContent=text;el.style.color=ok?'#2ecc71':'#e74c3c'}
 async function changeUsername(){

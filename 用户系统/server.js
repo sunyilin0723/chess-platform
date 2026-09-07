@@ -31,6 +31,7 @@ const { checkSensitive, filterSensitive, isMuted, addViolation } = require('./ut
 const { createGomokuBoard, checkGomokuWin, getAIMove: gomokuAI, isForbiddenMove } = require('./game/gomoku');
 const { createGoBoard, getGoLiberties, goRemoveCaptures, goCountTerritory, getAIMove: goAI } = require('./game/go');
 const { createChessBoard, getChessMoves, chessFindKing, chessIsAttacked, chessInCheck, chessHasLegalMove, getAIMove: chessAI } = require('./game/chess');
+const { createIntlChessBoard, intlPieceColor, getIntlChessLegalMoves, intlHasLegalMoves, makeIntlMove, intlCheck, intlCheckmate, intlStalemate, intlGetAIMove } = require('./game/intl_chess');
 
 // 中间件
 app.use(express.static(path.join(__dirname, 'public')));
@@ -48,9 +49,15 @@ const mutedChat = new Map();
 
 function createRoom(roomId, gameType, timerSeconds, mode, difficulty, forbidden) {
   const size = gameType === 'chess' ? null : (gameType === 'go' ? 19 : 15);
+  let board;
+  if (gameType === 'chess') board = createChessBoard();
+  else if (gameType === 'intl_chess') board = createIntlChessBoard();
+  else if (gameType === 'go') board = createGoBoard(size);
+  else board = createGomokuBoard(size);
+
   return {
     id: roomId, gameType: gameType || 'gomoku', players: [], names: {}, tokens: {},
-    board: gameType === 'chess' ? createChessBoard() : (gameType === 'go' ? createGoBoard(size) : createGomokuBoard(size)),
+    board,
     size: size || 15, turn: 1, started: false, choosing: false, moveCount: 0,
     moveHistory: [], undoCount: [0, 0], drawCount: [0, 0],
     pendingUndo: null, pendingDraw: null,
@@ -58,6 +65,7 @@ function createRoom(roomId, gameType, timerSeconds, mode, difficulty, forbidden)
     timerInterval: null, gameOver: false, passCount: 0, lastMove: null,
     goCaptures: [0, 0], mode: mode || 'pvp', difficulty: difficulty || 'easy', aiColor: 0,
     forbidden: forbidden || false,
+    intlLastMove: null, // 国际象棋专用
   };
 }
 
@@ -97,9 +105,17 @@ function stopTimer(room) { if (room.timerInterval) { clearInterval(room.timerInt
 function cleanupRoom(room) { stopTimer(room); }
 
 async function recordGame(winnerName, loserName, totalMoves, moves, gameType) {
-  await User.updateOne({ username: winnerName }, { $inc: { wins: 1, games: 1 } });
-  await User.updateOne({ username: loserName }, { $inc: { losses: 1, games: 1 } });
-  await GameLog.create({ winner: winnerName, loser: loserName, totalMoves, gameType: gameType || 'gomoku', moves: moves || [], time: new Date().toISOString() });
+  try {
+    console.log('[recordGame] 开始保存:', winnerName, '胜', loserName, '负', gameType, totalMoves, '手');
+    const winnerExists = await User.findOne({ username: winnerName });
+    const loserExists = await User.findOne({ username: loserName });
+    if (winnerExists) await User.updateOne({ username: winnerName }, { $inc: { wins: 1, games: 1 } });
+    if (loserExists) await User.updateOne({ username: loserName }, { $inc: { losses: 1, games: 1 } });
+    const saved = await GameLog.create({ winner: winnerName, loser: loserName, totalMoves, gameType: gameType || 'gomoku', moves: moves || [], time: new Date().toISOString() });
+    console.log('[recordGame] 保存成功 ID:', saved._id);
+  } catch (e) {
+    console.error('[recordGame] 保存失败:', e.message, e.stack);
+  }
 }
 
 async function isBanned(username) {
@@ -202,6 +218,35 @@ app.get('/api/profile/:username', async (req, res) => {
   info.reportCount = await Report.countDocuments({ target: req.params.username, status: 'approved' });
   info.reports = await Report.find({ target: req.params.username }).sort({ time: -1 }).lean();
   res.json(info);
+});
+
+// ==================== 个人对局记录 ====================
+app.get('/api/my-games', authMiddleware, async (req, res) => {
+  const username = req.username;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const skip = (page - 1) * limit;
+
+  const games = await GameLog.find({ $or: [{ winner: username }, { loser: username }] })
+    .sort({ time: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
+
+  const total = await GameLog.countDocuments({ $or: [{ winner: username }, { loser: username }] });
+
+  res.json({
+    games,
+    total,
+    page,
+    totalPages: Math.ceil(total / limit)
+  });
+});
+
+// 调试：查看所有对局记录
+app.get('/api/debug/games', async (req, res) => {
+  const games = await GameLog.find().sort({ time: -1 }).limit(10).lean();
+  res.json({ total: await GameLog.countDocuments(), games });
 });
 
 // ==================== 修改用户名 ====================
@@ -455,6 +500,18 @@ wss.on('connection', (ws) => {
           const aiMove = gomokuAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size);
           if (aiMove) {
             const [aiR, aiC] = aiMove;
+            // AI先手禁手检查
+            if (currentRoom.forbidden && currentRoom.aiColor === 1) {
+              const forbidden = isForbiddenMove(currentRoom.board, aiR, aiC, currentRoom.aiColor);
+              if (forbidden) {
+                currentRoom.gameOver = true; stopTimer(currentRoom);
+                const humanColor = currentRoom.aiColor === 1 ? 2 : 1;
+                const wName = currentRoom.names[humanColor], lName = currentRoom.names[currentRoom.aiColor];
+                broadcast(currentRoom, { type: 'game_over', winner: humanColor, reason: `AI禁手：${forbidden.type}，判负`, winnerName: wName, loserName: lName });
+                cleanupRoom(currentRoom);
+                return;
+              }
+            }
             currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]) });
             currentRoom.board[aiR][aiC] = currentRoom.aiColor;
             currentRoom.moveCount++; currentRoom.lastMove = [aiR, aiC];
@@ -524,7 +581,12 @@ wss.on('connection', (ws) => {
           currentRoom.gameOver = true; stopTimer(currentRoom);
           const wName = currentRoom.names[myColor], lName = currentRoom.names[myColor === 1 ? 2 : 1];
           broadcast(currentRoom, { type: 'game_over', winner: myColor, reason: '五子连珠', winnerName: wName, loserName: lName });
-          if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+          console.log('五子棋游戏结束:', { wName, lName, myColor, names: currentRoom.names });
+          if (wName && lName && wName !== lName) {
+            recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+          } else {
+            console.log('五子棋跳过recordGame:', { wName, lName });
+          }
           cleanupRoom(currentRoom);
         } else if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
           setTimeout(() => {
@@ -532,6 +594,18 @@ wss.on('connection', (ws) => {
             const aiMove = gomokuAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size);
             if (aiMove) {
               const [aiR, aiC] = aiMove;
+              // AI禁手检查（只对黑棋生效）
+              if (currentRoom.forbidden && currentRoom.aiColor === 1) {
+                const forbidden = isForbiddenMove(currentRoom.board, aiR, aiC, currentRoom.aiColor);
+                if (forbidden) {
+                  currentRoom.gameOver = true; stopTimer(currentRoom);
+                  const humanColor = currentRoom.aiColor === 1 ? 2 : 1;
+                  const wName = currentRoom.names[humanColor], lName = currentRoom.names[currentRoom.aiColor];
+                  broadcast(currentRoom, { type: 'game_over', winner: humanColor, reason: `AI禁手：${forbidden.type}，判负`, winnerName: wName, loserName: lName });
+                  cleanupRoom(currentRoom);
+                  return;
+                }
+              }
               currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]) });
               currentRoom.board[aiR][aiC] = currentRoom.aiColor;
               currentRoom.moveCount++; currentRoom.lastMove = [aiR, aiC];
@@ -651,6 +725,74 @@ wss.on('connection', (ws) => {
               }
             }
           }, 500);
+        }
+      } else if (currentRoom.gameType === 'intl_chess') {
+        const { fr, fc, tr, tc, special } = msg;
+        if (fr < 0 || fr >= 8 || fc < 0 || fc >= 8 || tr < 0 || tr >= 8 || tc < 0 || tc >= 8) return;
+        const piece = currentRoom.board[fr][fc];
+        if (!piece) return ws.send(JSON.stringify({ type: 'error', msg: '没有棋子' }));
+        const pieceColor = intlPieceColor(piece);
+        if (pieceColor !== myColor) return ws.send(JSON.stringify({ type: 'error', msg: '不是你的棋子' }));
+        const legalMoves = getIntlChessLegalMoves(currentRoom.board, fr, fc, currentRoom.intlLastMove);
+        const validMove = legalMoves.find(([mr, mc, sp]) => mr === tr && mc === tc && (sp === special || (!sp && !special)));
+        if (!validMove) return ws.send(JSON.stringify({ type: 'error', msg: '不能这样走' }));
+        const saved = currentRoom.board.map(row => [...row]);
+        const { captured, newLastMove } = makeIntlMove(currentRoom.board, fr, fc, tr, tc, validMove[2], currentRoom.intlLastMove);
+        currentRoom.intlLastMove = newLastMove;
+        currentRoom.moveHistory.push({ type: 'move', fr, fc, tr, tc, special: validMove[2], color: myColor, captured, board: saved });
+        currentRoom.lastMove = [tr, tc]; currentRoom.moveCount++;
+        const opponent = myColor === 1 ? 2 : 1; currentRoom.turn = opponent;
+        broadcast(currentRoom, { type: 'move', fr, fc, tr, tc, special: validMove[2], color: myColor, turn: currentRoom.turn, captured, lastMove: [tr, tc], board: currentRoom.board });
+        // 检查将杀/逼和/将军
+        const check = intlCheck(currentRoom.board, opponent);
+        const checkmate = intlCheckmate(currentRoom.board, opponent, currentRoom.intlLastMove);
+        const stalemate = intlStalemate(currentRoom.board, opponent, currentRoom.intlLastMove);
+        if (checkmate || stalemate) {
+          currentRoom.gameOver = true; stopTimer(currentRoom);
+          const wName = currentRoom.names[myColor], lName = currentRoom.names[opponent];
+          const reason = checkmate ? '将杀' : '逼和（平局）';
+          const winner = checkmate ? myColor : 0;
+          broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName });
+          console.log('游戏结束:', { wName, lName, checkmate, stalemate, winner, gameType: 'intl_chess' });
+          if (wName && lName && wName !== lName) {
+            recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
+          } else {
+            console.log('跳过recordGame:', { wName, lName });
+          }
+          cleanupRoom(currentRoom);
+        } else {
+          if (check) broadcast(currentRoom, { type: 'chat', color: 0, text: '将军！' });
+          // AI走棋
+          if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
+            setTimeout(() => {
+              if (currentRoom.gameOver) return;
+              const aiMove = intlGetAIMove(currentRoom.board, currentRoom.difficulty, currentRoom.intlLastMove);
+              if (aiMove) {
+                const { fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial } = aiMove;
+                const aiSaved = currentRoom.board.map(row => [...row]);
+                const { captured: aiCaptured, newLastMove: aiLastMove } = makeIntlMove(currentRoom.board, aiFr, aiFc, aiTr, aiTc, aiSpecial, currentRoom.intlLastMove);
+                currentRoom.intlLastMove = aiLastMove;
+                currentRoom.moveHistory.push({ type: 'move', fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial, color: currentRoom.aiColor, captured: aiCaptured, board: aiSaved });
+                currentRoom.lastMove = [aiTr, aiTc]; currentRoom.moveCount++;
+                currentRoom.turn = currentRoom.aiColor === 1 ? 2 : 1;
+                broadcast(currentRoom, { type: 'move', fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial, color: currentRoom.aiColor, turn: currentRoom.turn, captured: aiCaptured, lastMove: [aiTr, aiTc], board: currentRoom.board });
+                const aiCheck = intlCheck(currentRoom.board, currentRoom.turn);
+                const aiCheckmate = intlCheckmate(currentRoom.board, currentRoom.turn, currentRoom.intlLastMove);
+                const aiStalemate = intlStalemate(currentRoom.board, currentRoom.turn, currentRoom.intlLastMove);
+                if (aiCheckmate || aiStalemate) {
+                  currentRoom.gameOver = true; stopTimer(currentRoom);
+                  const wName = currentRoom.names[currentRoom.aiColor], lName = currentRoom.names[currentRoom.turn];
+                  const reason = aiCheckmate ? '将杀' : '逼和（平局）';
+                  const winner = aiCheckmate ? currentRoom.aiColor : 0;
+                  broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName });
+                  if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
+                  cleanupRoom(currentRoom);
+                } else if (aiCheck) {
+                  broadcast(currentRoom, { type: 'chat', color: 0, text: '将军！' });
+                }
+              }
+            }, 500);
+          }
         }
       }
     }
