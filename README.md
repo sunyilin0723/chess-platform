@@ -4,21 +4,25 @@
 
 ## 功能特性
 
-### 三种棋类游戏
+### 四种棋类游戏
 - **五子棋** - 15x15棋盘，支持禁手规则（三三/四四/长连禁手）
 - **围棋** - 19x19棋盘，支持领地计分、死活判断
 - **中国象棋** - 标准象棋规则，支持将军/将杀判定
+- **国际象棋** - 标准国际象棋规则，支持王车易位、吃过路兵、兵升变、将军/将杀/逼和判定
 
 ### 人机对战
 - 三个难度等级：简单、普通、困难
 - 五子棋AI：棋型评分+极大极小搜索+Alpha-Beta剪枝
 - 围棋AI：死活判断+眼位识别+攻防评估
-- 象棋AI：位置价值表+走法排序+搜索算法
+- 中国象棋AI：位置价值表+走法排序+搜索算法
+- 国际象棋AI：位置价值表+走法排序+搜索算法
 
 ### 用户系统
 - 注册/登录（Argon2密码加密）
-- 个人主页和排行榜
-- 修改用户名/密码
+- 个人主页：折叠面板设计
+  - 🔒 账户安全：修改用户名、修改密码、注销账号
+  - 🎮 最近对局记录：查看历史对局，点击可棋盘回放
+- 排行榜
 - 账号软删除（7天保留期）
 
 ### 社交功能
@@ -42,7 +46,7 @@
 ### 管理后台
 - 实时对局监控
 - 举报/申诉审核
-- 对局记录（含棋盘回放）
+- 对局记录（含棋盘回放：上一步/下一步浏览）
 - 聊天日志
 - 用户查询
 - 管理员管理（主管理员/普通管理员权限）
@@ -50,7 +54,7 @@
 ### 界面特性
 - 深色/浅色主题切换
 - 响应式布局
-- 棋盘跟随主题变化
+- 四种棋盘都跟随主题变化
 
 ---
 
@@ -120,25 +124,26 @@ node server.js
 ├── 用户系统/                     # 游戏服务器 (端口3002)
 │   ├── server.js                 # 主入口
 │   ├── models/
-│   │   └── index.js              # 9个数据库模型
+│   │   └── index.js              # 10个数据库模型（含Admin）
 │   ├── utils/
 │   │   ├── index.js              # 密码加密、ID生成
 │   │   └── sensitive.js          # 敏感词过滤、禁言
 │   ├── game/
 │   │   ├── gomoku.js             # 五子棋+禁手检测+AI
 │   │   ├── go.js                 # 围棋+AI
-│   │   └── chess.js              # 象棋+AI
+│   │   ├── chess.js              # 中国象棋+AI
+│   │   └── intl_chess.js         # 国际象棋+AI
 │   ├── public/
 │   │   ├── index.html            # 页面结构
 │   │   ├── style.css             # 样式（深色/浅色主题）
 │   │   ├── game.js               # 核心逻辑、认证、主题切换
 │   │   ├── game2.js              # WebSocket通信、断线重连
-│   │   └── game3.js              # 棋盘渲染、通知/私信
+│   │   └── game3.js              # 棋盘渲染、通知/私信、对局记录
 │   └── package.json
 ├── 管理员系统/                   # 管理后台 (端口3003)
 │   ├── server.js                 # 管理API、管理员模型
 │   ├── public/
-│   │   └── index.html            # 管理界面（登录、监控、审核）
+│   │   └── index.html            # 管理界面（登录、监控、审核、棋盘回放）
 │   └── package.json
 └── README.md
 ```
@@ -151,12 +156,13 @@ node server.js
 
 | 模块 | 文件 | 功能 |
 |------|------|------|
-| 数据库 | `models/index.js` | User, Ban, Report, GameLog, Appeal, Token, Notification, ChatLog, DM |
+| 数据库 | `models/index.js` | User, Ban, Report, GameLog, Appeal, Token, Notification, ChatLog, DM, Admin |
 | 工具 | `utils/index.js` | hashPw, verifyPw, genId, genToken |
 | 敏感词 | `utils/sensitive.js` | checkSensitive, filterSensitive, isMuted, addViolation |
 | 五子棋 | `game/gomoku.js` | checkGomokuWin, isForbiddenMove, getAIMove |
 | 围棋 | `game/go.js` | goRemoveCaptures, goCountTerritory, getAIMove |
-| 象棋 | `game/chess.js` | getChessMoves, chessInCheck, chessHasLegalMove, getAIMove |
+| 中国象棋 | `game/chess.js` | getChessMoves, chessInCheck, chessHasLegalMove, getAIMove |
+| 国际象棋 | `game/intl_chess.js` | getIntlChessLegalMoves, intlCheckmate, intlGetAIMove |
 
 ### 前端文件
 
@@ -164,7 +170,7 @@ node server.js
 |------|------|
 | `game.js` | 登录认证、页面切换、主题切换、HTML安全转义 |
 | `game2.js` | WebSocket连接、消息收发、断线重连 |
-| `game3.js` | 棋盘绘制、通知/私信、个人主页 |
+| `game3.js` | 棋盘绘制（4种）、通知/私信、个人主页、对局记录回放 |
 
 ---
 
@@ -177,6 +183,7 @@ node server.js
 | 查看实时对局 | ✅ | ✅ |
 | 审核举报/申诉 | ✅ | ✅ |
 | 查看对局记录 | ✅ | ✅ |
+| 棋盘回放 | ✅ | ✅ |
 | 添加管理员 | ✅ | ❌ |
 | 删除管理员 | ✅ | ❌ |
 | 注销用户 | ✅ | ❌ |
@@ -192,6 +199,23 @@ node server.js
 在"对局记录"页面，点击"▶"可以展开棋盘回放：
 - 支持上一步/下一步浏览
 - 显示每步棋的棋谱
+- 支持五子棋、围棋、中国象棋、国际象棋
+
+---
+
+## 个人主页
+
+个人主页采用折叠面板设计：
+
+- **🔒 账户安全**（点击展开）
+  - 修改用户名（需输入密码确认）
+  - 修改密码
+  - 注销账号（需输入密码确认）
+
+- **🎮 最近对局记录**（点击展开）
+  - 显示每局的胜负、对手、游戏类型、手数、时间
+  - 点击可弹出棋盘回放
+  - 支持分页浏览
 
 ---
 
@@ -225,6 +249,30 @@ node server.js
 
 ---
 
+## API接口
+
+### 用户系统
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /api/register | 注册 |
+| POST | /api/login | 登录 |
+| POST | /api/logout | 登出 |
+| GET | /api/me | 当前用户信息 |
+| GET | /api/profile/:username | 用户资料 |
+| GET | /api/leaderboard | 排行榜 |
+| GET | /api/my-games | 我的对局记录（需登录） |
+| POST | /api/change-username | 修改用户名 |
+| POST | /api/change-password | 修改密码 |
+| POST | /api/delete-account | 注销账号 |
+| POST | /api/report | 举报 |
+| POST | /api/appeal | 申诉 |
+| GET | /api/notifs | 通知列表 |
+| GET | /api/dm/* | 私信相关 |
+| GET | /api/debug/games | 调试：查看对局记录 |
+
+---
+
 ## 注意事项
 
 1. 首次启动会自动创建主管理员（从`.env`读取）
@@ -232,3 +280,5 @@ node server.js
 3. 聊天记录默认保留15天
 4. 五子棋禁手只对黑棋（先手）生效
 5. 人机对战退出后房间会自动删除
+6. 国际象棋AI使用Unicode棋子符号显示
+7. 棋盘回放支持四种游戏的完整棋谱浏览
