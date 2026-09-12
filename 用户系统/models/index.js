@@ -104,4 +104,16 @@ const Notification = mongoose.model('Notification', notifSchema);
 const ChatLog = mongoose.model('ChatLog', chatLogSchema);
 const DM = mongoose.model('DM', dmSchema);
 
-module.exports = { User, Ban, Report, GameLog, Appeal, Token, Notification, ChatLog, DM };
+// 反馈模型
+const feedbackSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  from: { type: String, required: true },
+  content: { type: String, required: true },
+  status: { type: String, default: 'pending' }, // pending / replied
+  reply: { type: String, default: '' },
+  repliedAt: { type: String, default: null },
+  time: { type: String, default: () => new Date().toISOString() },
+}, { collection: 'feedbacks' });
+const Feedback = mongoose.model('Feedback', feedbackSchema);
+
+module.exports = { User, Ban, Report, GameLog, Appeal, Token, Notification, ChatLog, DM, Feedback };

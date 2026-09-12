@@ -123,6 +123,18 @@ const adminSchema = new mongoose.Schema({
 }, { collection: 'admins' });
 const Admin = mongoose.model('Admin', adminSchema);
 
+// 反馈模型
+const feedbackSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  from: { type: String, required: true },
+  content: { type: String, required: true },
+  status: { type: String, default: 'pending' },
+  reply: { type: String, default: '' },
+  repliedAt: { type: String, default: null },
+  time: { type: String, default: () => new Date().toISOString() },
+}, { collection: 'feedbacks' });
+const Feedback = mongoose.model('Feedback', feedbackSchema);
+
 // 初始化主管理员
 async function initMainAdmin() {
   const mainUser = process.env.ADMIN_USERNAME;
@@ -361,6 +373,36 @@ app.post('/api/appeal/reject', adminAuth, async (req, res) => {
   appeal.status = 'rejected'; appeal.reviewedAt = new Date().toISOString();
   await appeal.save();
   pushNotif(appeal.username, '申诉被驳回', '您的申诉已被驳回');
+  res.json({ ok: true });
+});
+
+// ==================== 反馈系统（仅主管理员） ====================
+// 主管理员权限检查
+async function checkMainAdmin(req, res) {
+  const admin = await Admin.findOne({ username: req.adminUsername });
+  return admin && admin.isMain;
+}
+
+// 获取反馈列表
+app.get('/api/feedbacks', adminAuth, async (req, res) => {
+  if (!(await checkMainAdmin(req, res))) return res.status(403).json({ error: '仅主管理员可查看反馈' });
+  const list = await Feedback.find().sort({ time: -1 }).limit(50).lean();
+  res.json(list);
+});
+
+// 回复反馈
+app.post('/api/feedback/reply', adminAuth, async (req, res) => {
+  if (!(await checkMainAdmin(req, res))) return res.status(403).json({ error: '仅主管理员可回复反馈' });
+  const { feedbackId, reply } = req.body || {};
+  if (!feedbackId || !reply || !reply.trim()) return res.status(400).json({ error: '请填写回复内容' });
+  const fb = await Feedback.findOne({ id: feedbackId });
+  if (!fb) return res.status(400).json({ error: '反馈不存在' });
+  fb.status = 'replied';
+  fb.reply = reply.trim();
+  fb.repliedAt = new Date().toISOString();
+  await fb.save();
+  // 发送站内通知给反馈用户
+  pushNotif(fb.from, '反馈已回复', reply.trim().substring(0, 100));
   res.json({ ok: true });
 });
 

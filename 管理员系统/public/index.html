@@ -76,6 +76,7 @@ body { font-family: 'Microsoft YaHei', sans-serif; background: #0f1923; color: #
     <span data-page="chatlog" onclick="showPage('chatlog')">聊天日志</span>
     <span data-page="user" onclick="showPage('user')">用户查询</span>
     <span data-page="admins" onclick="showPage('admins')">管理员</span>
+    <span data-page="feedbacks" id="nav-feedbacks" onclick="showPage('feedbacks')" style="display:none;color:#f0c040">反馈</span>
     <span onclick="adminLogout()" style="color:#e74c3c;">退出</span>
   </div>
 </div>
@@ -172,6 +173,11 @@ body { font-family: 'Microsoft YaHei', sans-serif; background: #0f1923; color: #
   </div>
 </div>
 
+<div id="page-feedbacks" class="page">
+  <h2>用户反馈 <button onclick="refreshFeedbacks()" style="margin-left:10px;padding:4px 12px;font-size:13px;background:#0f3460;color:#fff;border:none;border-radius:4px;cursor:pointer;">刷新</button></h2>
+  <div id="feedbacks-content" style="max-width:700px;"></div>
+</div>
+
 <script>
 const reportTypeNames = { boost: '刷胜率/放水', cheat: '使用外挂', abuse: '恶意行为', other: '其他' };
 let refreshTimer = null;
@@ -187,6 +193,7 @@ function showPage(name) {
   if (name === 'appeals') refreshAppeals();
   if (name === 'gamelog') refreshGameLog();
   if (name === 'admins') refreshAdmins();
+  if (name === 'feedbacks') refreshFeedbacks();
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   if (name === 'rooms') refreshTimer = setInterval(refreshRooms, 3000);
 }
@@ -212,6 +219,7 @@ async function adminLogin() {
     localStorage.setItem('admin_user', data.username);
     localStorage.setItem('admin_is_main', data.isMain);
     document.getElementById('login-overlay').style.display = 'none';
+    document.getElementById('nav-feedbacks').style.display = isMainAdmin ? 'inline' : 'none';
     refreshRooms();
   } catch (e) { document.getElementById('login-error').textContent = '登录失败'; }
 }
@@ -230,6 +238,7 @@ if (!adminKey) {
   document.getElementById('login-overlay').style.display = 'flex';
 } else {
   document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('nav-feedbacks').style.display = isMainAdmin ? 'inline' : 'none';
 }
 
 async function apiFetch(path, opts) {
@@ -749,6 +758,47 @@ async function deleteAdmin(username) {
     const r = await apiFetch('/api/admins/delete', { method: 'POST', body: JSON.stringify({ username }) });
     if (r.error) { alert(r.error); return; }
     refreshAdmins();
+  } catch (e) { alert(e.message); }
+}
+
+// ==================== 反馈管理 ====================
+async function refreshFeedbacks() {
+  const el = document.getElementById('feedbacks-content');
+  try {
+    const list = await apiFetch('/api/feedbacks');
+    if (!list.length) { el.innerHTML = '<div class="empty-msg">暂无用户反馈</div>'; return; }
+    el.innerHTML = list.map(fb => {
+      const time = new Date(fb.time).toLocaleString('zh-CN');
+      const statusText = fb.status === 'replied' ? '已回复' : '待处理';
+      const statusColor = fb.status === 'replied' ? '#2ecc71' : '#f0c040';
+      return `<div style="background:#16213e;border-radius:10px;padding:14px 18px;border:1px solid #222;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div>
+            <span style="font-weight:bold;">${fb.from}</span>
+            <span style="margin-left:8px;color:${statusColor};font-size:12px;">[${statusText}]</span>
+          </div>
+          <span style="color:#666;font-size:12px;">${time}</span>
+        </div>
+        <div style="color:#ccc;font-size:13px;margin-bottom:10px;padding:8px 12px;background:#0d1b3e;border-radius:6px;">${fb.content}</div>
+        ${fb.status === 'replied' ? `<div style="color:#2ecc71;font-size:13px;padding:8px 12px;background:rgba(46,204,113,0.1);border-radius:6px;margin-bottom:8px;">回复：${fb.reply}<div style="color:#666;font-size:11px;margin-top:4px;">${new Date(fb.repliedAt).toLocaleString('zh-CN')}</div></div>` : ''}
+        <div style="display:flex;gap:8px;">
+          <input id="reply-input-${fb.id}" placeholder="输入回复内容..." style="flex:1;padding:8px 12px;font-size:13px;border:1px solid #333;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;">
+          <button onclick="replyFeedback('${fb.id}')" style="padding:8px 16px;background:#0f3460;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;">回复</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch { el.innerHTML = '<div class="empty-msg">加载失败</div>'; }
+}
+
+async function replyFeedback(feedbackId) {
+  const input = document.getElementById('reply-input-' + feedbackId);
+  const reply = input.value.trim();
+  if (!reply) { alert('请输入回复内容'); return; }
+  try {
+    const r = await apiFetch('/api/feedback/reply', { method: 'POST', body: JSON.stringify({ feedbackId, reply }) });
+    if (r.error) { alert(r.error); return; }
+    alert('回复成功，已通知用户');
+    refreshFeedbacks();
   } catch (e) { alert(e.message); }
 }
 

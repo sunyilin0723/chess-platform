@@ -181,15 +181,29 @@
   </div>
 </div>
 
-<!-- 新建私信弹窗 -->
+<!-- 新建消息弹窗（聊天/反馈选择） -->
 <div id="new-dm-dialog" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:200;justify-content:center;align-items:center">
   <div style="background:#16213e;border-radius:12px;padding:24px 28px;width:360px;text-align:center">
-    <h3 style="margin-bottom:14px;font-size:18px">发送私信</h3>
-    <input id="new-dm-to" type="text" placeholder="收件人用户名" maxlength="10" style="width:100%;padding:10px 12px;font-size:14px;border:1px solid #333;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;margin-bottom:10px">
-    <textarea id="new-dm-content" placeholder="消息内容" maxlength="500" style="width:100%;height:80px;padding:10px 12px;font-size:14px;border:1px solid #333;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;resize:none;margin-bottom:14px"></textarea>
-    <div style="display:flex;gap:10px">
-      <button onclick="closeNewDmDialog()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#333;color:#fff;cursor:pointer;font-size:14px">取消</button>
-      <button onclick="submitNewDm()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#0f3460;color:#fff;cursor:pointer;font-size:14px">发送</button>
+    <h3 style="margin-bottom:16px;font-size:18px">新建消息</h3>
+    <div style="display:flex;gap:10px;margin-bottom:14px">
+      <button onclick="switchNewMsgTab('dm')" id="tab-new-dm" style="flex:1;padding:10px;border:2px solid #5c9ded;border-radius:8px;background:#0f3460;color:#fff;cursor:pointer;font-size:14px">新建聊天</button>
+      <button onclick="switchNewMsgTab('feedback')" id="tab-new-fb" style="flex:1;padding:10px;border:2px solid #333;border-radius:8px;background:#0d1b3e;color:#aaa;cursor:pointer;font-size:14px">新建反馈</button>
+    </div>
+    <div id="new-dm-form">
+      <input id="new-dm-to" type="text" placeholder="收件人用户名" maxlength="10" style="width:100%;padding:10px 12px;font-size:14px;border:1px solid #333;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;margin-bottom:10px">
+      <textarea id="new-dm-content" placeholder="消息内容" maxlength="500" style="width:100%;height:80px;padding:10px 12px;font-size:14px;border:1px solid #333;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;resize:none;margin-bottom:14px"></textarea>
+      <div style="display:flex;gap:10px">
+        <button onclick="closeNewDmDialog()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#333;color:#fff;cursor:pointer;font-size:14px">取消</button>
+        <button onclick="submitNewDm()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#0f3460;color:#fff;cursor:pointer;font-size:14px">发送</button>
+      </div>
+    </div>
+    <div id="new-feedback-form" style="display:none">
+      <textarea id="new-feedback-content" placeholder="请输入反馈内容..." maxlength="1000" style="width:100%;height:120px;padding:10px 12px;font-size:14px;border:1px solid #333;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;resize:none;margin-bottom:14px"></textarea>
+      <div id="feedback-msg" style="font-size:12px;min-height:16px;margin-bottom:8px;color:#888"></div>
+      <div style="display:flex;gap:10px">
+        <button onclick="closeNewDmDialog()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#333;color:#fff;cursor:pointer;font-size:14px">取消</button>
+        <button onclick="submitFeedback()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#2a6a3a;color:#fff;cursor:pointer;font-size:14px">提交反馈</button>
+      </div>
     </div>
   </div>
 </div>
@@ -217,8 +231,8 @@
   </div>
 </div>
 
-<script src="game.js?v=3"></script>
-<script src="game2.js?v=3"></script>
-<script src="game3.js?v=3"></script>
+<script src="game.js?v=4"></script>
+<script src="game2.js?v=4"></script>
+<script src="game3.js?v=4"></script>
 </body>
 </html>

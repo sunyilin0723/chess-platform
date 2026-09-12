@@ -25,7 +25,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 // 导入模块
-const { User, Ban, Report, GameLog, Appeal, Token, Notification, ChatLog, DM } = require('./models');
+const { User, Ban, Report, GameLog, Appeal, Token, Notification, ChatLog, DM, Feedback } = require('./models');
 const { hashPw, verifyPw, genId, genToken } = require('./utils');
 const { checkSensitive, filterSensitive, isMuted, addViolation } = require('./utils/sensitive');
 const { createGomokuBoard, checkGomokuWin, getAIMove: gomokuAI, isForbiddenMove } = require('./game/gomoku');
@@ -372,7 +372,7 @@ app.post('/api/dm/send', authMiddleware, async (req, res) => {
   if (to === req.username) return res.status(400).json({ error: '不能给自己发私信' });
   const target = await User.findOne({ username: to });
   if (!target) return res.status(400).json({ error: '收件人不存在' });
-  const { text: filteredContent } = filterSensitive(content.trim());
+  const filteredContent = filterSensitive(content.trim());
   await DM.create({ id: genId(), from: req.username, to, content: filteredContent.substring(0, 500), read: false, time: new Date().toISOString() });
   res.json({ ok: true });
 });
@@ -403,6 +403,22 @@ app.post('/api/dm/read', authMiddleware, async (req, res) => {
 app.get('/api/dm/unread', authMiddleware, async (req, res) => {
   const count = await DM.countDocuments({ to: req.username, read: false });
   res.json({ count });
+});
+
+// ==================== 反馈系统 ====================
+// 提交反馈
+app.post('/api/feedback', authMiddleware, async (req, res) => {
+  const { content } = req.body || {};
+  if (!content || !content.trim()) return res.status(400).json({ error: '请输入反馈内容' });
+  const filteredContent = filterSensitive(content.trim());
+  await Feedback.create({ id: genId(), from: req.username, content: filteredContent.substring(0, 1000), time: new Date().toISOString() });
+  res.json({ ok: true });
+});
+
+// 查看我的反馈（含回复）
+app.get('/api/feedback/mine', authMiddleware, async (req, res) => {
+  const list = await Feedback.find({ from: req.username }).sort({ time: -1 }).limit(20).lean();
+  res.json(list);
 });
 
 // ==================== WebSocket ====================
@@ -1035,7 +1051,8 @@ wss.on('connection', (ws) => {
         return;
       }
       let text = String(msg.text || '').substring(0, 200);
-      const { text: filteredText, filtered } = filterSensitive(text);
+      const filteredText = filterSensitive(text);
+      const filtered = filteredText !== text;
       if (filtered) ws.send(JSON.stringify({ type: 'chat', color: 0, text: '系统：消息包含敏感词，已过滤处理' }));
       await ChatLog.create({ id: genId(), roomId: currentRoom.id, username, color: playerColor, text: filteredText, filtered, time: new Date().toISOString() });
       broadcast(currentRoom, { type: 'chat', color: playerColor, text: filteredText });

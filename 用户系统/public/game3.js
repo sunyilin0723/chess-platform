@@ -327,9 +327,27 @@ window.openNewDmDialog=function(){
   document.getElementById('new-dm-dialog').style.display='flex';
   document.getElementById('new-dm-to').value='';
   document.getElementById('new-dm-content').value='';
+  document.getElementById('new-feedback-content').value='';
+  document.getElementById('feedback-msg').textContent='';
+  switchNewMsgTab('dm');
 };
 window.closeNewDmDialog=function(){
   document.getElementById('new-dm-dialog').style.display='none';
+};
+window.switchNewMsgTab=function(tab){
+  const dmForm=document.getElementById('new-dm-form');
+  const fbForm=document.getElementById('new-feedback-form');
+  const tabDm=document.getElementById('tab-new-dm');
+  const tabFb=document.getElementById('tab-new-fb');
+  if(tab==='dm'){
+    dmForm.style.display='block';fbForm.style.display='none';
+    tabDm.style.cssText='flex:1;padding:10px;border:2px solid #5c9ded;border-radius:8px;background:#0f3460;color:#fff;cursor:pointer;font-size:14px';
+    tabFb.style.cssText='flex:1;padding:10px;border:2px solid #333;border-radius:8px;background:#0d1b3e;color:#aaa;cursor:pointer;font-size:14px';
+  } else {
+    dmForm.style.display='none';fbForm.style.display='block';
+    tabDm.style.cssText='flex:1;padding:10px;border:2px solid #333;border-radius:8px;background:#0d1b3e;color:#aaa;cursor:pointer;font-size:14px';
+    tabFb.style.cssText='flex:1;padding:10px;border:2px solid #2a6a3a;border-radius:8px;background:#1a4a2a;color:#fff;cursor:pointer;font-size:14px';
+  }
 };
 window.submitNewDm=function(){
   const to=document.getElementById('new-dm-to').value.trim();
@@ -340,6 +358,17 @@ window.submitNewDm=function(){
     if(dmOpen)loadDmInbox();
     if(dmConvOpen&&currentDmUser===to)loadDmMessages(to);
   }).catch(e=>alert(e.message));
+};
+window.submitFeedback=function(){
+  const content=document.getElementById('new-feedback-content').value.trim();
+  const msgEl=document.getElementById('feedback-msg');
+  if(!content){msgEl.textContent='请输入反馈内容';msgEl.style.color='#e74c3c';return}
+  apiFetch('/api/feedback',{method:'POST',body:JSON.stringify({content})}).then(()=>{
+    msgEl.textContent='反馈已提交，管理员回复后会通过站内通知告知';
+    msgEl.style.color='#2ecc71';
+    document.getElementById('new-feedback-content').value='';
+    setTimeout(()=>closeNewDmDialog(),1500);
+  }).catch(e=>{msgEl.textContent=e.message;msgEl.style.color='#e74c3c'});
 };
 window.onNewDm=function(from){
   const b=document.getElementById('dm-badge');
