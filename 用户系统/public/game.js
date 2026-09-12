@@ -24,8 +24,10 @@ document.addEventListener('DOMContentLoaded',()=>{
   // 初始化主题
   const savedTheme=localStorage.getItem('gomoku_theme')||'dark';
   document.documentElement.setAttribute('data-theme',savedTheme);
-  // 初始化禁手选项显示（默认五子棋选中，显示禁手选项）
-  document.getElementById('forbidden-select').style.display='flex';
+  // 初始化棋类选择滑块
+  initGameSlider();
+  // 默认选中五子棋，显示禁手选项
+  selectGame('gomoku',document.querySelector('.game-slider-item.selected'));
 });
 
 function showView(name){
@@ -133,11 +135,90 @@ function selectForbidden(forbidden,btn){
   document.querySelectorAll('#forbidden-select button').forEach(b=>b.classList.remove('selected'));
   btn.classList.add('selected');
 }
+// 棋类选择滑块
+const GAME_TYPES = ['gomoku','go','chess','intl_chess'];
 function selectGame(type,btn){
   selectedGame=type;
-  document.querySelectorAll('.game-select button').forEach(b=>b.classList.remove('selected'));
-  btn.classList.add('selected');
-  document.getElementById('forbidden-select').style.display=type==='gomoku'?'flex':'none';
+  const items=document.querySelectorAll('.game-slider-item');
+  items.forEach(b=>b.classList.remove('selected'));
+  if(btn)btn.classList.add('selected');
+  moveSliderIndicator(GAME_TYPES.indexOf(type));
+  const forbidden=document.getElementById('forbidden-select');
+  if(forbidden){
+    if(type==='gomoku')forbidden.classList.remove('hidden');
+    else forbidden.classList.add('hidden');
+  }
+}
+function moveSliderIndicator(index){
+  if(index<0)index=0;
+  const indicator=document.getElementById('game-slider-indicator');
+  if(!indicator)return;
+  const count=GAME_TYPES.length;
+  const width=100/count;
+  indicator.style.left=`calc(${index*width}% + 4px)`;
+  indicator.style.width=`calc(${width}% - 6px)`;
+}
+// 拖拽支持
+let sliderDragging=false,sliderStartX=0,sliderStartIndex=0,sliderMoved=false;
+function initGameSlider(){
+  const slider=document.getElementById('game-slider');
+  if(!slider)return;
+  const items=document.querySelectorAll('.game-slider-item');
+  const indicator=document.getElementById('game-slider-indicator');
+  // 初始化指示器位置
+  moveSliderIndicator(0);
+  slider.addEventListener('pointerdown',e=>{
+    sliderDragging=true;sliderMoved=false;
+    sliderStartX=e.clientX;
+    sliderStartIndex=GAME_TYPES.indexOf(selectedGame);
+    try{slider.setPointerCapture(e.pointerId)}catch(_){}
+    indicator.style.transition='none';
+    items.forEach(b=>b.classList.add('dragging'));
+  });
+  slider.addEventListener('pointermove',e=>{
+    if(!sliderDragging)return;
+    const dx=e.clientX-sliderStartX;
+    if(Math.abs(dx)>4)sliderMoved=true;
+    const sliderWidth=slider.offsetWidth;
+    const count=GAME_TYPES.length;
+    const itemWidth=sliderWidth/count;
+    const offset=Math.max(0,Math.min(sliderWidth-itemWidth, sliderStartIndex*itemWidth+dx));
+    indicator.style.left=(offset+4)+'px';
+  });
+  slider.addEventListener('pointerup',e=>{
+    if(!sliderDragging)return;
+    sliderDragging=false;
+    indicator.style.transition='left .3s cubic-bezier(.4,0,.2,1),background .3s';
+    items.forEach(b=>b.classList.remove('dragging'));
+    if(sliderMoved){
+      // 拖拽：根据距离吸附
+      const dx=e.clientX-sliderStartX;
+      const sliderWidth=slider.offsetWidth;
+      const itemWidth=sliderWidth/GAME_TYPES.length;
+      let targetIndex=Math.round((sliderStartIndex*itemWidth+dx)/itemWidth);
+      targetIndex=Math.max(0,Math.min(GAME_TYPES.length-1,targetIndex));
+      selectGame(GAME_TYPES[targetIndex],items[targetIndex]);
+    } else {
+      // 点击：根据点击位置计算索引
+      const rect=slider.getBoundingClientRect();
+      const x=e.clientX-rect.left;
+      let targetIndex=Math.floor(x/(rect.width/GAME_TYPES.length));
+      targetIndex=Math.max(0,Math.min(GAME_TYPES.length-1,targetIndex));
+      selectGame(GAME_TYPES[targetIndex],items[targetIndex]);
+    }
+  });
+  slider.addEventListener('pointercancel',()=>{
+    sliderDragging=false;
+    indicator.style.transition='left .3s cubic-bezier(.4,0,.2,1),background .3s';
+    items.forEach(b=>b.classList.remove('dragging'));
+    moveSliderIndicator(GAME_TYPES.indexOf(selectedGame));
+  });
+  slider.addEventListener('pointercancel',()=>{
+    sliderDragging=false;
+    indicator.style.transition='left .3s cubic-bezier(.4,0,.2,1),background .3s';
+    items.forEach(b=>b.classList.remove('dragging'));
+    moveSliderIndicator(GAME_TYPES.indexOf(selectedGame));
+  });
 }
 function joinRoom(){
   let roomId=document.getElementById('room-input').value.trim()||'default';

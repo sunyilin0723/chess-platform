@@ -3,8 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>在线棋类对战</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 <div id="navbar">
@@ -63,11 +66,12 @@
     <div class="card lobby-card">
       <h2>在线棋类对战</h2>
       <div class="greeting" id="lobby-greeting"></div>
-      <div class="game-select">
-        <button class="selected" onclick="selectGame('gomoku',this)">五子棋</button>
-        <button onclick="selectGame('go',this)">围棋</button>
-        <button onclick="selectGame('chess',this)">中国象棋</button>
-        <button onclick="selectGame('intl_chess',this)">国际象棋</button>
+      <div class="game-select-slider" id="game-slider">
+        <div class="game-slider-indicator" id="game-slider-indicator"></div>
+        <button class="game-slider-item selected" data-game="gomoku">五子棋</button>
+        <button class="game-slider-item" data-game="go">围棋</button>
+        <button class="game-slider-item" data-game="chess">中国象棋</button>
+        <button class="game-slider-item" data-game="intl_chess">国际象棋</button>
       </div>
       <div class="timer-select">
         <button onclick="selectTimer(0,this)" class="selected">不限时</button>
@@ -85,7 +89,7 @@
         <button onclick="selectDifficulty('medium',this)">普通</button>
         <button onclick="selectDifficulty('hard',this)">困难</button>
       </div>
-      <div id="forbidden-select" style="display:none">
+      <div id="forbidden-select" class="hidden">
         <span>禁手规则：</span>
         <button class="selected" onclick="selectForbidden(false,this)">无禁手</button>
         <button onclick="selectForbidden(true,this)">有禁手</button>

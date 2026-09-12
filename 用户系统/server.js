@@ -34,6 +34,10 @@ const { createChessBoard, getChessMoves, chessFindKing, chessIsAttacked, chessIn
 const { createIntlChessBoard, intlPieceColor, getIntlChessLegalMoves, intlHasLegalMoves, makeIntlMove, intlCheck, intlCheckmate, intlStalemate, intlGetAIMove } = require('./game/intl_chess');
 
 // 中间件
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/screenshots', express.static(path.join(__dirname, 'data', 'screenshots')));
 app.use(express.json({ limit: '10mb' }));
