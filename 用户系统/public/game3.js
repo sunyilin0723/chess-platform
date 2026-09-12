@@ -422,9 +422,9 @@ function loadProfile(username){
     <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;">
       <div onclick="toggleProfileSection('security')" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:var(--bg-input);border-radius:10px;cursor:pointer;border:1px solid var(--border-color);">
         <span style="font-weight:bold;">🔒 账户安全</span>
-        <span id="security-arrow" style="color:var(--text-muted);transition:transform 0.2s;">▶</span>
+        <span id="security-arrow" style="color:var(--text-muted);transition:transform 0.3s;">▶</span>
       </div>
-      <div id="security-section" style="display:none;padding:16px;background:var(--bg-input);border-radius:10px;border:1px solid var(--border-color);">
+      <div id="security-section" class="collapsible-section" style="overflow:hidden;max-height:0;opacity:0;transition:max-height 0.4s cubic-bezier(0.4,0,0.2,1),opacity 0.3s ease,padding 0.3s;padding:0 16px;background:var(--bg-input);border-radius:10px;border:1px solid var(--border-color);">
         <div style="margin-bottom:14px;">
           <label class="profile-label">修改用户名</label>
           <input type="text" id="new-username" placeholder="新用户名" maxlength="10" class="profile-input">
@@ -444,9 +444,9 @@ function loadProfile(username){
 
       <div onclick="toggleProfileSection('games')" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:var(--bg-input);border-radius:10px;cursor:pointer;border:1px solid var(--border-color);">
         <span style="font-weight:bold;">🎮 最近对局记录</span>
-        <span id="games-arrow" style="color:var(--text-muted);transition:transform 0.2s;">▶</span>
+        <span id="games-arrow" style="color:var(--text-muted);transition:transform 0.3s;">▶</span>
       </div>
-      <div id="games-section" style="display:none;padding:16px;background:var(--bg-input);border-radius:10px;border:1px solid var(--border-color);">
+      <div id="games-section" class="collapsible-section" style="overflow:hidden;max-height:0;opacity:0;transition:max-height 0.4s cubic-bezier(0.4,0,0.2,1),opacity 0.3s ease,padding 0.3s;padding:0 16px;background:var(--bg-input);border-radius:10px;border:1px solid var(--border-color);">
         <div id="my-games-list"></div>
       </div>
     </div>
@@ -456,12 +456,17 @@ function loadProfile(username){
 function toggleProfileSection(name){
   const section=document.getElementById(name+'-section');
   const arrow=document.getElementById(name+'-arrow');
-  if(section.style.display==='none'){
-    section.style.display='block';
+  const isOpen=section.style.maxHeight&&section.style.maxHeight!=='0px';
+  if(!isOpen){
+    section.style.maxHeight=section.scrollHeight+'px';
+    section.style.opacity='1';
+    section.style.padding='16px';
     arrow.style.transform='rotate(90deg)';
     if(name==='games')loadMyGames();
   }else{
-    section.style.display='none';
+    section.style.maxHeight='0';
+    section.style.opacity='0';
+    section.style.padding='0 16px';
     arrow.style.transform='rotate(0deg)';
   }
 }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>棋类对战管理员系统</title>
+<title>管理员后台</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: 'Microsoft YaHei', sans-serif; background: #0f1923; color: #eee; min-height: 100vh; }
@@ -355,10 +355,10 @@ async function refreshGameLog() {
             <span style="font-weight:bold;">${g.winner} 胜</span>
             <span style="color:#888;font-size:12px;">[${gameName}]</span>
             <span style="color:#666;font-size:12px;">${time}</span>
-            <span id="arrow-${idx}" style="color:#5c9ded;font-size:14px;transition:transform 0.2s;">▶</span>
+            <span id="arrow-${idx}" style="color:#5c9ded;font-size:14px;transition:transform 0.3s;">▶</span>
           </div>
           <div style="font-size:13px;color:#aaa;margin-top:4px;">${g.loser} 负 · ${g.totalMoves}手</div>
-          <div id="detail-${idx}" style="display:none;margin-top:12px;padding:12px;background:#0d1b3e;border-radius:6px;">
+          <div id="detail-${idx}" style="overflow:hidden;max-height:0;opacity:0;transition:max-height 0.4s cubic-bezier(0.4,0,0.2,1),opacity 0.3s ease,margin 0.3s;margin-top:0;padding:0 12px;background:#0d1b3e;border-radius:6px;">
           </div>
         </div>`;
       }).join('');
@@ -369,9 +369,9 @@ let gameData = [];
 function toggleGameDetail(idx) {
   const detail = document.getElementById('detail-' + idx);
   const arrow = document.getElementById('arrow-' + idx);
-  if (detail.style.display === 'none') {
-    detail.style.display = 'block';
-    arrow.style.transform = 'rotate(90deg)';
+  const isOpen = detail.style.maxHeight && detail.style.maxHeight !== '0px';
+  if (!isOpen) {
+    // 先加载内容再设置高度
     if (!detail.innerHTML.trim()) {
       const g = gameData[idx];
       if (g) {
@@ -393,8 +393,20 @@ function toggleGameDetail(idx) {
         drawReplayBoard(idx, 0);
       }
     }
+    // 展开动画
+    requestAnimationFrame(() => {
+      detail.style.maxHeight = detail.scrollHeight + 'px';
+      detail.style.opacity = '1';
+      detail.style.marginTop = '12px';
+      detail.style.padding = '12px';
+      arrow.style.transform = 'rotate(90deg)';
+    });
   } else {
-    detail.style.display = 'none';
+    // 收起动画
+    detail.style.maxHeight = '0';
+    detail.style.opacity = '0';
+    detail.style.marginTop = '0';
+    detail.style.padding = '0 12px';
     arrow.style.transform = 'rotate(0deg)';
   }
 }
