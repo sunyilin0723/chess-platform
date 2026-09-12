@@ -26,6 +26,40 @@ function isIntlFriendly(piece, myColor) {
   return intlPieceColor(piece) === myColor;
 }
 
+// 轻量检测：某格是否被指定颜色攻击（避免易位检查的无限递归）
+function isSquareAttacked(board, targetR, targetC, byColor) {
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      if (intlPieceColor(board[r][c]) !== byColor) continue;
+      const piece = board[r][c];
+      const type = piece.toUpperCase();
+      if (type === 'P') {
+        const dir = byColor === 1 ? -1 : 1;
+        if (r + dir === targetR && (c - 1 === targetC || c + 1 === targetC)) return true;
+      } else if (type === 'N') {
+        for (const [dr, dc] of [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]]) {
+          if (r + dr === targetR && c + dc === targetC) return true;
+        }
+      } else if (type === 'K') {
+        if (Math.abs(r - targetR) <= 1 && Math.abs(c - targetC) <= 1 && (r !== targetR || c !== targetC)) return true;
+      } else {
+        const dirs = type === 'B' ? [[-1,-1],[-1,1],[1,-1],[1,1]]
+                  : type === 'R' ? [[-1,0],[1,0],[0,-1],[0,1]]
+                  : [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+        for (const [dr, dc] of dirs) {
+          for (let i = 1; i < 8; i++) {
+            const nr = r + dr * i, nc = c + dc * i;
+            if (nr === targetR && nc === targetC) return true;
+            if (nr < 0 || nr >= 8 || nc < 0 || nc >= 8) break;
+            if (board[nr][nc]) break;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
 // 获取所有合法走法
 function getIntlChessMoves(board, r, c, lastMove) {
   const piece = board[r][c];
@@ -64,8 +98,10 @@ function getIntlChessMoves(board, r, c, lastMove) {
           moves.push([nr, nc]);
         }
       }
-      // 吃过路兵
-      if (lastMove && lastMove.type === 'en_passant' && lastMove.tr === r && lastMove.tc === nc) {
+      // 吃过路兵：对方上一手是兵双步，且刚落在旁边
+      if (lastMove && lastMove.type === 'pawn_double' && lastMove.tr === r && lastMove.tc === nc
+          && board[lastMove.tr][lastMove.tc] && board[lastMove.tr][lastMove.tc].toUpperCase() === 'P'
+          && intlPieceColor(board[lastMove.tr][lastMove.tc]) !== color) {
         moves.push([nr, nc, 'en_passant']);
       }
     }
@@ -115,18 +151,23 @@ function getIntlChessMoves(board, r, c, lastMove) {
     }
     // 王车易位
     const row = color === 1 ? 7 : 0;
+    const rights = (lastMove && lastMove.castlingRights) || { wk: true, wq: true, bk: true, bq: true };
     if (r === row && c === 4) {
-      // 短易位
-      const shortKey = color === 1 ? 'white_short' : 'black_short';
-      if (!board[row][5] && !board[row][6] && board[row][7] && board[row][7].toUpperCase() === 'R' &&
-          intlPieceColor(board[row][7]) === color && !lastMove?.castlingDone?.[shortKey]) {
-        moves.push([row, 6, 'castle_short']);
-      }
-      // 长易位
-      const longKey = color === 1 ? 'white_long' : 'black_long';
-      if (!board[row][1] && !board[row][2] && !board[row][3] && board[row][0] && board[row][0].toUpperCase() === 'R' &&
-          intlPieceColor(board[row][0]) === color && !lastMove?.castlingDone?.[longKey]) {
-        moves.push([row, 2, 'castle_long']);
+      // 王当前不能被将军
+      if (!isSquareAttacked(board, row, 4, color === 1 ? 2 : 1)) {
+        // 短易位
+        const kSide = color === 1 ? rights.wk : rights.bk;
+        if (kSide && !board[row][5] && !board[row][6]
+            && board[row][7] && board[row][7].toUpperCase() === 'R' && intlPieceColor(board[row][7]) === color) {
+          // 王经过的格子不能被攻击
+          if (!isSquareAttacked(board, row, 5, color === 1 ? 2 : 1)) moves.push([row, 6, 'castle_short']);
+        }
+        // 长易位
+        const qSide = color === 1 ? rights.wq : rights.bq;
+        if (qSide && !board[row][1] && !board[row][2] && !board[row][3]
+            && board[row][0] && board[row][0].toUpperCase() === 'R' && intlPieceColor(board[row][0]) === color) {
+          if (!isSquareAttacked(board, row, 3, color === 1 ? 2 : 1)) moves.push([row, 2, 'castle_long']);
+        }
       }
     }
   }
@@ -198,29 +239,67 @@ function intlHasLegalMoves(board, color, lastMove) {
   return false;
 }
 
-// 执行走棋
+// 计算走子后的易位权利
+function updateCastlingRights(rights, piece, fr, fc, tr, tc, captured) {
+  const r = { ...rights };
+  const type = piece.toUpperCase();
+  const color = intlPieceColor(piece);
+  // 王移动：清空该方权利
+  if (type === 'K') {
+    if (color === 1) { r.wk = false; r.wq = false; }
+    else { r.bk = false; r.bq = false; }
+  }
+  // 车移动：清对应侧
+  if (type === 'R') {
+    if (color === 1 && fr === 7 && fc === 7) r.wk = false;
+    if (color === 1 && fr === 7 && fc === 0) r.wq = false;
+    if (color === 2 && fr === 0 && fc === 7) r.bk = false;
+    if (color === 2 && fr === 0 && fc === 0) r.bq = false;
+  }
+  // 车被吃：清对应侧
+  if (captured && captured.toUpperCase() === 'R') {
+    if (tr === 7 && tc === 7) r.wk = false;
+    if (tr === 7 && tc === 0) r.wq = false;
+    if (tr === 0 && tc === 7) r.bk = false;
+    if (tr === 0 && tc === 0) r.bq = false;
+  }
+  return r;
+}
+
+// 执行走棋（返回可撤销信息）
 function makeIntlMove(board, fr, fc, tr, tc, special, lastMove) {
   const piece = board[fr][fc];
   const color = intlPieceColor(piece);
   const captured = board[tr][tc];
-  const newLastMove = { fr, fc, tr, tc, type: 'move', color };
+  const prevRights = (lastMove && lastMove.castlingRights) || { wk: true, wq: true, bk: true, bq: true };
+  const newRights = updateCastlingRights(prevRights, piece, fr, fc, tr, tc, captured);
+  const newLastMove = { fr, fc, tr, tc, type: 'move', color, castlingRights: newRights };
+  const undo = { fr, fc, tr, tc, piece, captured, special, prevRights };
 
   board[tr][tc] = piece;
   board[fr][fc] = '';
 
+  // 兵双步：标记供吃过路兵判断
+  if (piece.toUpperCase() === 'P' && Math.abs(tr - fr) === 2) {
+    newLastMove.type = 'pawn_double';
+  }
+
   // 吃过路兵
   if (special === 'en_passant') {
+    undo.enPassantCaptured = board[fr][tc];
     board[fr][tc] = ''; // 吃掉过路兵
     newLastMove.type = 'en_passant';
   }
 
   // 王车易位
   if (special === 'castle_short') {
-    board[tr][tc - 1] = board[tr][tc + 1]; // 车移到王旁边
+    undo.rookFrom = [tr, tc + 1]; undo.rookTo = [tr, tc - 1];
+    board[tr][tc - 1] = board[tr][tc + 1];
     board[tr][tc + 1] = '';
     newLastMove.type = 'castle_short';
   } else if (special === 'castle_long') {
-    board[tr][tc + 1] = board[tr][tc - 2]; // 车移到王旁边
+    undo.rookFrom = [tr, tc - 2]; undo.rookTo = [tr, tc + 1];
+    board[tr][tc + 1] = board[tr][tc - 2];
     board[tr][tc - 2] = '';
     newLastMove.type = 'castle_long';
   }
@@ -229,9 +308,10 @@ function makeIntlMove(board, fr, fc, tr, tc, special, lastMove) {
   if (special && typeof special === 'string' && ['q','r','b','n'].includes(special)) {
     board[tr][tc] = color === 1 ? special.toUpperCase() : special;
     newLastMove.promotion = special;
+    undo.promotion = true;
   }
 
-  return { captured, newLastMove };
+  return { captured, newLastMove, undo };
 }
 
 // 检查是否将军
@@ -344,7 +424,6 @@ function intlSortMoves(board, moves) {
 
 function intlMinimax(board, depth, alpha, beta, isMaximizing, lastMove) {
   const color = isMaximizing ? 1 : 2;
-  const opponent = isMaximizing ? 2 : 1;
 
   if (intlCheckmate(board, color, lastMove)) return isMaximizing ? -99999 + depth : 99999 - depth;
   if (intlStalemate(board, color, lastMove)) return 0;
@@ -357,10 +436,9 @@ function intlMinimax(board, depth, alpha, beta, isMaximizing, lastMove) {
   if (isMaximizing) {
     let maxEval = -Infinity;
     for (const { fr, fc, tr, tc, special } of sortedMoves) {
-      const piece = board[fr][fc]; const captured = board[tr][nc || tc];
-      const { newLastMove } = intlMove_and_restore(board, fr, fc, tr, tc, special);
+      const { newLastMove, undo } = makeIntlMove(board, fr, fc, tr, tc, special, lastMove);
       const eval_ = intlMinimax(board, depth - 1, alpha, beta, false, newLastMove);
-      intlUndoMove(board, fr, fc, tr, tc, special, captured, newLastMove);
+      intlUndoMove(board, undo);
       maxEval = Math.max(maxEval, eval_);
       alpha = Math.max(alpha, eval_);
       if (beta <= alpha) break;
@@ -369,10 +447,9 @@ function intlMinimax(board, depth, alpha, beta, isMaximizing, lastMove) {
   } else {
     let minEval = Infinity;
     for (const { fr, fc, tr, tc, special } of sortedMoves) {
-      const piece = board[fr][fc]; const captured = board[tr][nc || tc];
-      const { newLastMove } = intlMove_and_restore(board, fr, fc, tr, tc, special);
+      const { newLastMove, undo } = makeIntlMove(board, fr, fc, tr, tc, special, lastMove);
       const eval_ = intlMinimax(board, depth - 1, alpha, beta, true, newLastMove);
-      intlUndoMove(board, fr, fc, tr, tc, special, captured, newLastMove);
+      intlUndoMove(board, undo);
       minEval = Math.min(minEval, eval_);
       beta = Math.min(beta, eval_);
       if (beta <= alpha) break;
@@ -381,51 +458,16 @@ function intlMinimax(board, depth, alpha, beta, isMaximizing, lastMove) {
   }
 }
 
-// 辅助函数：走棋并返回新状态
-function intlMove_and_restore(board, fr, fc, tr, tc, special) {
-  const piece = board[fr][fc];
-  const captured = board[tr][tc];
-  const color = intlPieceColor(piece);
-
-  board[tr][tc] = piece;
-  board[fr][fc] = '';
-
-  let enPassantCaptured = null;
-  if (special === 'en_passant') {
-    enPassantCaptured = board[fr][tc];
-    board[fr][tc] = '';
-  }
-
-  let rookSaved = null, rookFrom = null, rookTo = null;
-  if (special === 'castle_short') {
-    rookSaved = board[tr][tc + 1]; rookFrom = [tr, tc + 1]; rookTo = [tr, tc - 1];
-    board[tr][tc - 1] = board[tr][tc + 1]; board[tr][tc + 1] = '';
-  } else if (special === 'castle_long') {
-    rookSaved = board[tr][tc - 2]; rookFrom = [tr, tc - 2]; rookTo = [tr, tc + 1];
-    board[tr][tc + 1] = board[tr][tc - 2]; board[tr][tc - 2] = '';
-  }
-
-  let promotionSaved = null;
-  if (special && ['q','r','b','n'].includes(special)) {
-    promotionSaved = piece;
-    board[tr][tc] = color === 1 ? special.toUpperCase() : special;
-  }
-
-  const newLastMove = { fr, fc, tr, tc, color, type: special || 'move' };
-
-  return { captured, newLastMove, enPassantCaptured, rookSaved, rookFrom, rookTo, promotionSaved };
-}
-
-function intlUndoMove(board, fr, fc, tr, tc, special, captured, newLastMove) {
-  const piece = board[tr][tc];
-  const color = intlPieceColor(piece);
-
+// 撤销走棋（使用makeIntlMove返回的undo信息）
+function intlUndoMove(board, undo) {
+  const { fr, fc, tr, tc, piece, captured, special, enPassantCaptured, rookFrom, rookTo } = undo;
   board[fr][fc] = piece;
   board[tr][tc] = captured;
-
-  if (special === 'en_passant') board[fr][tc] = newLastMove.enPassantCaptured;
-  if (special === 'castle_short') { board[newLastMove.rookFrom[0]][newLastMove.rookFrom[1]] = newLastMove.rookSaved; board[newLastMove.rookTo[0]][newLastMove.rookTo[1]] = ''; }
-  if (special === 'castle_long') { board[newLastMove.rookFrom[0]][newLastMove.rookFrom[1]] = newLastMove.rookSaved; board[newLastMove.rookTo[0]][newLastMove.rookTo[1]] = ''; }
+  if (special === 'en_passant' && enPassantCaptured !== undefined) board[fr][tc] = enPassantCaptured;
+  if (rookFrom && rookTo) {
+    board[rookFrom[0]][rookFrom[1]] = board[rookTo[0]][rookTo[1]];
+    board[rookTo[0]][rookTo[1]] = '';
+  }
 }
 
 // AI走棋
@@ -440,9 +482,9 @@ function intlGetAIMove(board, difficulty, lastMove) {
   let bestMove = null, bestScore = -Infinity;
 
   for (const { fr, fc, tr, tc, special } of sortedMoves) {
-    const { captured, newLastMove, enPassantCaptured, rookSaved, rookFrom, rookTo, promotionSaved } = intlMove_and_restore(board, fr, fc, tr, tc, special);
+    const { newLastMove, undo } = makeIntlMove(board, fr, fc, tr, tc, special, lastMove);
     const score = intlMinimax(board, depth - 1, -Infinity, Infinity, false, newLastMove);
-    intlUndoMove(board, fr, fc, tr, tc, special, captured, { ...newLastMove, enPassantCaptured, rookSaved, rookFrom, rookTo });
+    intlUndoMove(board, undo);
 
     const randomFactor = difficulty === 'easy' ? (Math.random() * 40 - 20) : 0;
     if (score + randomFactor > bestScore) {

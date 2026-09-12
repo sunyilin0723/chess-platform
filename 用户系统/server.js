@@ -508,6 +508,7 @@ wss.on('connection', (ws) => {
                 const humanColor = currentRoom.aiColor === 1 ? 2 : 1;
                 const wName = currentRoom.names[humanColor], lName = currentRoom.names[currentRoom.aiColor];
                 broadcast(currentRoom, { type: 'game_over', winner: humanColor, reason: `AI禁手：${forbidden.type}，判负`, winnerName: wName, loserName: lName });
+                if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
                 cleanupRoom(currentRoom);
                 return;
               }
@@ -546,10 +547,50 @@ wss.on('connection', (ws) => {
           }
         }, 500);
       }
+      // 国际象棋AI先手
+      if (currentRoom.mode === 'pve' && currentRoom.aiColor === 1 && currentRoom.gameType === 'intl_chess') {
+        setTimeout(() => {
+          if (currentRoom.gameOver) return;
+          const aiMove = intlGetAIMove(currentRoom.board, currentRoom.difficulty, currentRoom.intlLastMove);
+          if (aiMove) {
+            const { fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial } = aiMove;
+            const aiSaved = currentRoom.board.map(row => [...row]);
+            const { captured: aiCaptured, newLastMove: aiLastMove } = makeIntlMove(currentRoom.board, aiFr, aiFc, aiTr, aiTc, aiSpecial, currentRoom.intlLastMove);
+            currentRoom.intlLastMove = aiLastMove;
+            currentRoom.moveHistory.push({ type: 'move', fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial, color: currentRoom.aiColor, captured: aiCaptured, board: aiSaved });
+            currentRoom.lastMove = [aiTr, aiTc]; currentRoom.moveCount++;
+            currentRoom.turn = currentRoom.aiColor === 1 ? 2 : 1;
+            broadcast(currentRoom, { type: 'move', fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial, color: currentRoom.aiColor, turn: currentRoom.turn, captured: aiCaptured, lastMove: [aiTr, aiTc], board: currentRoom.board });
+          }
+        }, 500);
+      }
+      // 围棋AI先手
+      if (currentRoom.mode === 'pve' && currentRoom.aiColor === 1 && currentRoom.gameType === 'go') {
+        setTimeout(() => {
+          if (currentRoom.gameOver) return;
+          const aiMove = goAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size);
+          if (aiMove) {
+            const [aiR, aiC] = aiMove;
+            const aiTestBoard = currentRoom.board.map(row => [...row]);
+            aiTestBoard[aiR][aiC] = currentRoom.aiColor;
+            const aiResult = goRemoveCaptures(aiTestBoard, aiR, aiC, currentRoom.aiColor, currentRoom.size);
+            if (aiResult !== -1) {
+              currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures] });
+              currentRoom.board[aiR][aiC] = currentRoom.aiColor;
+              goRemoveCaptures(currentRoom.board, aiR, aiC, currentRoom.aiColor, currentRoom.size);
+              currentRoom.goCaptures[currentRoom.aiColor - 1] += aiResult;
+              currentRoom.lastMove = [aiR, aiC]; currentRoom.moveCount++; currentRoom.passCount = 0;
+              currentRoom.turn = currentRoom.aiColor === 1 ? 2 : 1;
+              broadcast(currentRoom, { type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, turn: currentRoom.turn, lastMove: [aiR, aiC], goCaptures: currentRoom.goCaptures, board: currentRoom.board.map(row => [...row]) });
+            }
+          }
+        }, 500);
+      }
     }
 
     // ==================== 走棋 ====================
     if (msg.type === 'move' && currentRoom && !currentRoom.gameOver) {
+      if (!currentRoom.started || currentRoom.choosing) return;
       const myColor = getPlayerColor(currentRoom, ws);
       if (currentRoom.turn !== myColor) return;
 
@@ -602,6 +643,7 @@ wss.on('connection', (ws) => {
                   const humanColor = currentRoom.aiColor === 1 ? 2 : 1;
                   const wName = currentRoom.names[humanColor], lName = currentRoom.names[currentRoom.aiColor];
                   broadcast(currentRoom, { type: 'game_over', winner: humanColor, reason: `AI禁手：${forbidden.type}，判负`, winnerName: wName, loserName: lName });
+                  if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
                   cleanupRoom(currentRoom);
                   return;
                 }
@@ -642,13 +684,17 @@ wss.on('connection', (ws) => {
         if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
           setTimeout(() => {
             if (currentRoom.gameOver) return;
-            const aiMove = goAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size);
+            let aiMove = goAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size);
+            let aiResult = 0;
             if (aiMove) {
               const [aiR, aiC] = aiMove;
               const aiTestBoard = currentRoom.board.map(row => [...row]);
               aiTestBoard[aiR][aiC] = currentRoom.aiColor;
-              const aiResult = goRemoveCaptures(aiTestBoard, aiR, aiC, currentRoom.aiColor, currentRoom.size);
-              if (aiResult === -1) return;
+              aiResult = goRemoveCaptures(aiTestBoard, aiR, aiC, currentRoom.aiColor, currentRoom.size);
+              if (aiResult === -1) aiMove = null; // 自杀着法，改为pass
+            }
+            if (aiMove) {
+              const [aiR, aiC] = aiMove;
               currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures] });
               currentRoom.board[aiR][aiC] = currentRoom.aiColor;
               goRemoveCaptures(currentRoom.board, aiR, aiC, currentRoom.aiColor, currentRoom.size);
@@ -753,11 +799,9 @@ wss.on('connection', (ws) => {
           const reason = checkmate ? '将杀' : '逼和（平局）';
           const winner = checkmate ? myColor : 0;
           broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName });
-          console.log('游戏结束:', { wName, lName, checkmate, stalemate, winner, gameType: 'intl_chess' });
-          if (wName && lName && wName !== lName) {
+          // 仅将杀时记录对局，逼和为平局不记录
+          if (checkmate && wName && lName && wName !== lName) {
             recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
-          } else {
-            console.log('跳过recordGame:', { wName, lName });
           }
           cleanupRoom(currentRoom);
         } else {
@@ -785,7 +829,7 @@ wss.on('connection', (ws) => {
                   const reason = aiCheckmate ? '将杀' : '逼和（平局）';
                   const winner = aiCheckmate ? currentRoom.aiColor : 0;
                   broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName });
-                  if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
+                  if (aiCheckmate && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
                   cleanupRoom(currentRoom);
                 } else if (aiCheck) {
                   broadcast(currentRoom, { type: 'chat', color: 0, text: '将军！' });
@@ -820,13 +864,17 @@ wss.on('connection', (ws) => {
       } else if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
         setTimeout(() => {
           if (currentRoom.gameOver) return;
-          const aiMove = goAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size);
+          let aiMove = goAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size);
+          let aiResult = 0;
           if (aiMove) {
             const [aiR, aiC] = aiMove;
             const aiTestBoard = currentRoom.board.map(row => [...row]);
             aiTestBoard[aiR][aiC] = currentRoom.aiColor;
-            const aiResult = goRemoveCaptures(aiTestBoard, aiR, aiC, currentRoom.aiColor, currentRoom.size);
-            if (aiResult === -1) return;
+            aiResult = goRemoveCaptures(aiTestBoard, aiR, aiC, currentRoom.aiColor, currentRoom.size);
+            if (aiResult === -1) aiMove = null; // 自杀着法，改为pass
+          }
+          if (aiMove) {
+            const [aiR, aiC] = aiMove;
             currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures] });
             currentRoom.board[aiR][aiC] = currentRoom.aiColor;
             goRemoveCaptures(currentRoom.board, aiR, aiC, currentRoom.aiColor, currentRoom.size);
@@ -875,6 +923,20 @@ wss.on('connection', (ws) => {
       if (currentRoom.moveHistory.length === 0) { ws.send(JSON.stringify({ type: 'error', msg: '没有可悔棋的步骤' })); return; }
       if (currentRoom.pendingUndo) { ws.send(JSON.stringify({ type: 'error', msg: '已有待处理的悔棋请求' })); return; }
       currentRoom.pendingUndo = { from: myColor };
+      // 人机对战：AI自动同意悔棋
+      if (currentRoom.mode === 'pve') {
+        const last = currentRoom.moveHistory.pop();
+        if (last && last.board) currentRoom.board = last.board.map(row => [...row]);
+        if (last && last.goCaptures) currentRoom.goCaptures = [...last.goCaptures];
+        if (last && last.type !== 'pass') currentRoom.moveCount = Math.max(0, currentRoom.moveCount - 1);
+        currentRoom.undoCount[myColor - 1]++;
+        currentRoom.turn = myColor;
+        currentRoom.lastMove = null;
+        currentRoom.intlLastMove = null;
+        currentRoom.pendingUndo = null;
+        broadcast(currentRoom, { type: 'undo_approved', turn: currentRoom.turn, board: currentRoom.board, moveCount: currentRoom.moveCount });
+        return;
+      }
       const opponent = myColor === 1 ? 2 : 1;
       const opWs = currentRoom.players.find(p => p.color === opponent);
       if (opWs && opWs.ws) opWs.ws.send(JSON.stringify({ type: 'undo_request', from: myColor, fromName: currentRoom.names[myColor] }));
@@ -906,6 +968,13 @@ wss.on('connection', (ws) => {
       const myColor = getPlayerColor(currentRoom, ws);
       if (currentRoom.drawCount[myColor - 1] >= 3) { ws.send(JSON.stringify({ type: 'error', msg: '每局最多求和3次' })); return; }
       if (currentRoom.pendingDraw) { ws.send(JSON.stringify({ type: 'error', msg: '已有待处理的求和请求' })); return; }
+      // 人机对战：AI拒绝求和
+      if (currentRoom.mode === 'pve') {
+        currentRoom.drawCount[myColor - 1]++;
+        ws.send(JSON.stringify({ type: 'draw_rejected' }));
+        addChat(currentRoom, { type: 'chat', color: 0, text: 'AI拒绝了求和请求' });
+        return;
+      }
       currentRoom.pendingDraw = { from: myColor };
       const opponent = myColor === 1 ? 2 : 1;
       const opWs = currentRoom.players.find(p => p.color === opponent);
@@ -929,14 +998,17 @@ wss.on('connection', (ws) => {
 
     // ==================== 再来一局 ====================
     if (msg.type === 'restart' && currentRoom && currentRoom.gameOver) {
-      const newBoard = currentRoom.gameType === 'chess' ? createChessBoard() :
-        (currentRoom.gameType === 'go' ? createGoBoard(currentRoom.size) : createGomokuBoard(currentRoom.size));
+      let newBoard;
+      if (currentRoom.gameType === 'chess') newBoard = createChessBoard();
+      else if (currentRoom.gameType === 'intl_chess') newBoard = createIntlChessBoard();
+      else if (currentRoom.gameType === 'go') newBoard = createGoBoard(currentRoom.size);
+      else newBoard = createGomokuBoard(currentRoom.size);
       currentRoom.board = newBoard;
       currentRoom.turn = 1; currentRoom.moveCount = 0; currentRoom.moveHistory = [];
       currentRoom.undoCount = [0, 0]; currentRoom.drawCount = [0, 0];
       currentRoom.pendingUndo = null; currentRoom.pendingDraw = null;
       currentRoom.gameOver = false; currentRoom.passCount = 0; currentRoom.lastMove = null;
-      currentRoom.goCaptures = [0, 0];
+      currentRoom.goCaptures = [0, 0]; currentRoom.intlLastMove = null;
       currentRoom.timeLeft = [currentRoom.timerSeconds || 0, currentRoom.timerSeconds || 0];
       currentRoom.choosing = true;
       broadcast(currentRoom, { type: 'restart', board: currentRoom.board });

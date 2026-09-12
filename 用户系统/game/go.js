@@ -6,7 +6,7 @@ function getGoLiberties(board, r, c, size) {
   const color = board[r][c];
   if (!color) return { liberties: 0, group: [] };
   const visited = new Set();
-  let liberties = 0;
+  const libertySet = new Set();
   const queue = [[r, c]];
   visited.add(r * size + c);
   const group = [[r, c]];
@@ -18,10 +18,10 @@ function getGoLiberties(board, r, c, size) {
       const key = nr * size + nc;
       if (visited.has(key)) continue;
       if (board[nr][nc] === color) { visited.add(key); queue.push([nr, nc]); group.push([nr, nc]); }
-      else if (board[nr][nc] === 0) liberties++;
+      else if (board[nr][nc] === 0) libertySet.add(key);
     }
   }
-  return { liberties, group };
+  return { liberties: libertySet.size, group };
 }
 
 function goRemoveCaptures(board, r, c, color, size) {
@@ -87,17 +87,28 @@ function goGetLegalMoves(board, color, size) {
 function isTrueEye(board, r, c, color, size) {
   const opponent = color === 1 ? 2 : 1;
   const isCorner = (r === 0 || r === size-1) && (c === 0 || c === size-1);
-  const isEdge = r === 0 || r === size-1 || c === 0 || c === size-1;
-  let friendlyCount = 0;
+  const isEdge = !isCorner && (r === 0 || r === size-1 || c === 0 || c === size-1);
+  let orthCount = 0;
   for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
     const nr = r + dr, nc = c + dc;
     if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue;
-    if (board[nr][nc] === color) friendlyCount++;
+    if (board[nr][nc] === color) orthCount++;
     else if (board[nr][nc] === opponent) return false;
   }
-  if (isCorner) return friendlyCount >= 2;
-  if (isEdge) return friendlyCount >= 3;
-  return friendlyCount >= 4;
+  // 四正交必须全为友方（边角相应减少）
+  if (isCorner && orthCount < 2) return false;
+  if (isEdge && orthCount < 3) return false;
+  if (!isCorner && !isEdge && orthCount < 4) return false;
+  // 对角线检查：内部点至少3个友方对角，边点至少2个，角点至少1个
+  let diagFriend = 0, diagTotal = 0;
+  for (const [dr, dc] of [[-1,-1],[-1,1],[1,-1],[1,1]]) {
+    const nr = r + dr, nc = c + dc;
+    if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue;
+    diagTotal++;
+    if (board[nr][nc] === color || board[nr][nc] === 0) diagFriend++;
+  }
+  const needed = isCorner ? 1 : (isEdge ? 2 : 3);
+  return diagFriend >= needed;
 }
 
 function countGroupEyes(board, group, color, size) {
@@ -160,7 +171,7 @@ function getAIMove(board, aiColor, difficulty, size) {
   let isEmpty = true;
   for (let r = 0; r < size; r++) { for (let c = 0; c < size; c++) { if (board[r][c] !== 0) { isEmpty = false; break; } } if (!isEmpty) break; }
   if (isEmpty) {
-    const corners = size === 19 ? [[3,3],[3,15],[15,3],[15,15]] : (size === 15 ? [[3,3],[3,11],[11,3],[11,15]] : [[3,3],[3,9],[9,3],[9,9]]);
+    const corners = size === 19 ? [[3,3],[3,15],[15,3],[15,15]] : (size === 15 ? [[3,3],[3,11],[11,3],[11,11]] : [[3,3],[3,9],[9,3],[9,9]]);
     return corners[Math.floor(Math.random() * corners.length)];
   }
 
@@ -178,7 +189,7 @@ function getAIMove(board, aiColor, difficulty, size) {
     const { liberties } = getGoLiberties(testBoard, r, c, size);
     score += liberties * 5;
     const testGroup = getGoLiberties(testBoard, r, c, size).group;
-    const eyes = countGroupEyes(testGroup, testBoard, aiColor, size);
+    const eyes = countGroupEyes(testBoard, testGroup, aiColor, size);
     if (eyes >= 2) score += 500; if (eyes === 1) score += 200;
     if (liberties <= 2) score -= 100;
 

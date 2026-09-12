@@ -4,7 +4,7 @@ let token=localStorage.getItem('gomoku_token')||'';
 let currentUser=localStorage.getItem('gomoku_user')||'';
 let ws,myColor=0,turn=0,gameOver=false,gameType='gomoku',boardSize=15;
 let board=[],lastMove=null,playerNames={};
-let timerSeconds=0,timeLeft=[0,0];
+let timerSeconds=0,timeLeft=[0,0],moveCount=0;
 let reportScreenshot='';
 let isAI=false,aiColor=0,forbiddenRule=false;
 
@@ -40,6 +40,8 @@ function showView(name){
     if(chatInput) chatInput.value='';
     board=[]; lastMove=null; gameOver=false; myColor=0; turn=0;
     playerNames={}; moveCount=0;
+    window._chessSelected=null; window._intlChessSelected=null;
+    isAI=false; aiColor=0;
   }
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.getElementById(name+'-view').classList.add('active');
@@ -154,7 +156,8 @@ function updateTurnStatus(){
   if(turn===0||gameOver)return;
   const isMe=turn===myColor;
   const myName=playerNames[myColor]||'你';
-  setStatus(`${isMe?myName+'，轮到你了':'等待对手落子...'} · ${colorDot(myColor)} ${myColor===1?(gameType==='chess'?'红方':'黑棋'):(gameType==='chess'?'黑方':'白棋')}`);
+  const sideName=gameType==='chess'?(myColor===1?'红方':'黑方'):(gameType==='intl_chess'?(myColor===1?'白方':'黑方'):(myColor===1?'黑棋':'白棋'));
+  setStatus(`${isMe?myName+'，轮到你了':'等待对手落子...'} · ${colorDot(myColor)} ${sideName}`);
   document.getElementById('btn-pass').style.display=(gameType==='go'&&!gameOver)?'inline-block':'none';
 }
 
@@ -164,4 +167,5 @@ function toggleTheme(){
   const next=current==='dark'?'light':'dark';
   document.documentElement.setAttribute('data-theme',next);
   localStorage.setItem('gomoku_theme',next);
+  if(board&&board.length&&typeof drawBoard==='function')drawBoard();
 }

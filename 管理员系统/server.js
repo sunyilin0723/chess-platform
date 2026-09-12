@@ -132,10 +132,16 @@ async function initMainAdmin() {
     return;
   }
   try {
-    // 清空旧管理员数据，只保留.env配置的主管理员
-    await Admin.deleteMany({});
-    await Admin.create({ username: mainUser, password: mainPass, isMain: true });
-    console.log('主管理员已创建:', mainUser);
+    // 仅在主管理员不存在时创建，避免清空其他管理员
+    const exists = await Admin.findOne({ username: mainUser });
+    if (!exists) {
+      await Admin.create({ username: mainUser, password: mainPass, isMain: true });
+      console.log('主管理员已创建:', mainUser);
+    } else {
+      // 同步.env中的密码
+      await Admin.updateOne({ username: mainUser }, { password: mainPass, isMain: true });
+      console.log('主管理员已存在:', mainUser);
+    }
   } catch (e) { console.error('初始化主管理员失败:', e.message); }
 }
 initMainAdmin();
@@ -207,12 +213,6 @@ app.get('/api/admins', adminAuth, async (req, res) => {
   res.json(admins);
 });
 
-// 调试：查看所有管理员（无需认证）
-app.get('/api/debug/admins', async (req, res) => {
-  const admins = await Admin.find().lean();
-  res.json(admins.map(a => ({ username: a.username, isMain: a.isMain })));
-});
-
 function pushNotif(username, title, content) {
   Notification.create({ id: crypto.randomBytes(8).toString('hex'), username, title, content, read: false, time: new Date().toISOString() });
 }
@@ -249,7 +249,7 @@ function checkAutoBan(target) {
   });
 }
 
-app.get('/api/rooms', async (req, res) => {
+app.get('/api/rooms', adminAuth, async (req, res) => {
   try {
     const rooms = await fetch(GAME_SERVER + '/api/admin/rooms', { headers: { 'Authorization': 'Bearer ' + ADMIN_KEY } });
     const data = await rooms.json();
@@ -257,12 +257,12 @@ app.get('/api/rooms', async (req, res) => {
   } catch { res.json([]); }
 });
 
-app.get('/api/reports', async (req, res) => {
+app.get('/api/reports', adminAuth, async (req, res) => {
   const reports = await Report.find({ status: 'pending' }).lean();
   res.json(reports);
 });
 
-app.post('/api/report/approve', async (req, res) => {
+app.post('/api/report/approve', adminAuth, async (req, res) => {
   const { reportId } = req.body || {};
   if (!reportId) return res.status(400).json({ error: '缺少举报ID' });
   const report = await Report.findOne({ id: reportId });
@@ -275,7 +275,7 @@ app.post('/api/report/approve', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/report/reject', async (req, res) => {
+app.post('/api/report/reject', adminAuth, async (req, res) => {
   const { reportId } = req.body || {};
   if (!reportId) return res.status(400).json({ error: '缺少举报ID' });
   const report = await Report.findOne({ id: reportId });
@@ -286,7 +286,7 @@ app.post('/api/report/reject', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/mark', async (req, res) => {
+app.post('/api/mark', adminAuth, async (req, res) => {
   const { username, reason } = req.body || {};
   if (!username || !reason) return res.status(400).json({ error: '参数不完整' });
   const user = await User.findOne({ username });
@@ -298,7 +298,7 @@ app.post('/api/mark', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/user/:username', async (req, res) => {
+app.get('/api/user/:username', adminAuth, async (req, res) => {
   const u = await User.findOne({ username: req.params.username }).lean();
   if (!u) return res.status(404).json({ error: '用户不存在' });
   const info = { ...u };
@@ -330,17 +330,17 @@ app.get('/api/user/:username', async (req, res) => {
   res.json(info);
 });
 
-app.get('/api/deleted-users', async (req, res) => {
+app.get('/api/deleted-users', adminAuth, async (req, res) => {
   const users = await User.find({ deletedAt: { $ne: null } }).select('username wins losses games deletedAt createdAt').lean();
   res.json(users.map(u => ({ ...u, winRate: u.games > 0 ? Math.round(u.wins / u.games * 100) : 0 })));
 });
 
-app.get('/api/appeals', async (req, res) => {
+app.get('/api/appeals', adminAuth, async (req, res) => {
   const appeals = await Appeal.find({ status: 'pending' }).lean();
   res.json(appeals);
 });
 
-app.post('/api/appeal/approve', async (req, res) => {
+app.post('/api/appeal/approve', adminAuth, async (req, res) => {
   const { appealId } = req.body || {};
   if (!appealId) return res.status(400).json({ error: '缺少申诉ID' });
   const appeal = await Appeal.findOne({ id: appealId });
@@ -353,7 +353,7 @@ app.post('/api/appeal/approve', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/appeal/reject', async (req, res) => {
+app.post('/api/appeal/reject', adminAuth, async (req, res) => {
   const { appealId } = req.body || {};
   if (!appealId) return res.status(400).json({ error: '缺少申诉ID' });
   const appeal = await Appeal.findOne({ id: appealId });
@@ -384,7 +384,7 @@ app.post('/api/force-delete', adminAuth, async (req, res) => {
 
 const PORT = process.env.ADMIN_PORT || 3003;
 
-app.get('/api/game-log', async (req, res) => {
+app.get('/api/game-log', adminAuth, async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 7;
     const cutoff = new Date(Date.now() - days * 86400000).toISOString();
@@ -393,7 +393,7 @@ app.get('/api/game-log', async (req, res) => {
   } catch (e) { res.json({ total: 0, days: 7, games: [] }); }
 });
 
-app.get('/api/admin/chat-logs', async (req, res) => {
+app.get('/api/admin/chat-logs', adminAuth, async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 7;
     const roomId = req.query.room || '';

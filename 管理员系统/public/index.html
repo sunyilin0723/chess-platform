@@ -335,15 +335,16 @@ async function refreshGameLog() {
   try {
     const data = await apiFetch('/api/game-log?days=' + days);
     if (!data.games || !data.games.length) { el.innerHTML = '<div class="empty-msg">近' + days + '天暂无对局记录</div>'; return; }
+    gameData = data.games; // 保存数据供回放使用
+    const gameTypeNames = { gomoku: '五子棋', go: '围棋', chess: '象棋', intl_chess: '国际象棋' };
     el.innerHTML = `<div style="margin-bottom:12px;color:#888;font-size:14px;">共 ${data.total} 场对局</div>` +
       data.games.map((g, idx) => {
         const time = new Date(g.time).toLocaleString('zh-CN');
-        const winnerColor = g.winner === 1 ? '黑' : g.winner === 2 ? '白' : '平';
-        const gameTypeName = { gomoku: '五子棋', go: '围棋', chess: '象棋' }[g.gameType] || g.gameType;
+        const gameName = gameTypeNames[g.gameType] || g.gameType;
         return `<div style="padding:10px 14px;background:#16213e;border-radius:8px;margin-bottom:6px;border:1px solid #222;">
           <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleGameDetail(${idx})">
-            <span style="font-weight:bold;">${g.winner} ${winnerColor}胜</span>
-            <span style="color:#888;font-size:12px;">[${gameTypeName}]</span>
+            <span style="font-weight:bold;">${g.winner} 胜</span>
+            <span style="color:#888;font-size:12px;">[${gameName}]</span>
             <span style="color:#666;font-size:12px;">${time}</span>
             <span id="arrow-${idx}" style="color:#5c9ded;font-size:14px;transition:transform 0.2s;">▶</span>
           </div>
@@ -356,17 +357,15 @@ async function refreshGameLog() {
 }
 
 let gameData = [];
-async function toggleGameDetail(idx) {
+function toggleGameDetail(idx) {
   const detail = document.getElementById('detail-' + idx);
   const arrow = document.getElementById('arrow-' + idx);
   if (detail.style.display === 'none') {
     detail.style.display = 'block';
     arrow.style.transform = 'rotate(90deg)';
     if (!detail.innerHTML.trim()) {
-      const data = await apiFetch('/api/game-log?days=365');
-      const g = data.games[idx];
+      const g = gameData[idx];
       if (g) {
-        gameData[idx] = g;
         detail.innerHTML = `
           <div style="display:flex;gap:16px;flex-wrap:wrap;">
             <div>

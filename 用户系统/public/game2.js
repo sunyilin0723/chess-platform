@@ -1,6 +1,7 @@
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let connectOptions = {};
+let backToLobbyCalled = false;
 
 function connect(roomId,mode,difficulty){
   document.getElementById('chat-msgs').innerHTML='';
@@ -60,13 +61,14 @@ function doConnect(roomId, mode, difficulty, forbidden){
       document.getElementById('timer-p2').className='timer-box'+(turn===2?' active':'');
     }
     if(msg.type==='move'){
-      if(gameType==='chess'){
-        board[msg.tr][msg.tc]=board[msg.fr][msg.fc];board[msg.fr][msg.fc]='';
+      if(gameType==='chess'||gameType==='intl_chess'){
+        if(msg.board)board=msg.board;
+        else {board[msg.tr][msg.tc]=board[msg.fr][msg.fc];board[msg.fr][msg.fc]='';}
       } else {
-        board[msg.r][msg.c]=msg.color;
+        if(msg.board)board=msg.board;
+        else board[msg.r][msg.c]=msg.color;
       }
       lastMove=msg.lastMove;turn=msg.turn;
-      if(msg.board)board=msg.board;
       drawBoard();
       if(msg.win!==undefined&&msg.win!==0){
         gameOver=true;
@@ -129,7 +131,7 @@ function doConnect(roomId, mode, difficulty, forbidden){
         addChat(`连接断开，正在重连...(${reconnectAttempts}/5)`,'msg-sys');
         reconnectTimer = setTimeout(()=>{
           if(!ws && !gameOver){
-            doConnect(connectOptions.roomId, connectOptions.mode, connectOptions.difficulty);
+            doConnect(connectOptions.roomId, connectOptions.mode, connectOptions.difficulty, connectOptions.forbidden);
           }
         }, delay);
       } else {
@@ -144,7 +146,6 @@ function doConnect(roomId, mode, difficulty, forbidden){
   };
   ws.onerror=()=>{};
 }
-let backToLobbyCalled = false;
 function chooseFirst(swap){document.getElementById('choose-first').classList.remove('show');if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'choose_first',swap}))}
 function sendRestart(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'restart'}))}
 function backToLobby(){
@@ -153,12 +154,12 @@ function backToLobby(){
   if(ws)ws.close();
   showView('lobby');
 }
-function sendResign(){if(!gameOver&&confirm('确定要认输吗？'))ws.send(JSON.stringify({type:'resign'}))}
-function sendPass(){if(!gameOver)ws.send(JSON.stringify({type:'pass'}))}
+function sendResign(){if(!gameOver&&confirm('确定要认输吗？')&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'resign'}))}
+function sendPass(){if(!gameOver&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'pass'}))}
 function sendUndo(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'undo_request'}))}
 function sendDraw(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'draw_request'}))}
-function respondUndo(ok){document.getElementById('undo-dialog').classList.remove('show');ws.send(JSON.stringify({type:'undo_response',approve:ok}))}
-function respondDraw(ok){document.getElementById('draw-dialog').classList.remove('show');ws.send(JSON.stringify({type:'draw_response',approve:ok}))}
+function respondUndo(ok){document.getElementById('undo-dialog').classList.remove('show');if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'undo_response',approve:ok}))}
+function respondDraw(ok){document.getElementById('draw-dialog').classList.remove('show');if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'draw_response',approve:ok}))}
 function sendChatMsg(){const t=document.getElementById('chat-input').value.trim();if(!t||!ws||ws.readyState!==1)return;ws.send(JSON.stringify({type:'chat',text:t}));document.getElementById('chat-input').value=''}
 document.getElementById('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter')sendChatMsg()});
 document.getElementById('room-input').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom()});
