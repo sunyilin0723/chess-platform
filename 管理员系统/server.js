@@ -449,4 +449,4 @@ app.get('/api/admin/chat-logs', adminAuth, async (req, res) => {
   } catch (e) { res.json({ total: 0, days: 7, logs: [] }); }
 });
 
-app.listen(PORT, () => console.log(`管理员系统运行在 http://localhost:${PORT}`));
+app.listen(PORT, '::', () => console.log(`管理员系统运行在 http://localhost:${PORT} (IPv6: http://[::1]:${PORT})`));

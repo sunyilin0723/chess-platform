@@ -11,7 +11,10 @@
 </head>
 <body>
 <div id="navbar">
-  <span class="logo">棋类对战</span>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <span class="logo">棋类对战</span>
+    <span onclick="openFeedbackDialog()" style="cursor:pointer;font-size:13px;color:var(--accent-yellow);border:1px solid var(--accent-yellow);border-radius:6px;padding:4px 12px;transition:all 0.2s;">💬 反馈</span>
+  </div>
   <div class="nav-links">
     <span onclick="showView('lobby')">大厅</span>
     <span onclick="showView('leaderboard')">排行榜</span>
@@ -181,30 +184,29 @@
   </div>
 </div>
 
-<!-- 新建消息弹窗（聊天/反馈选择） -->
+<!-- 新建私信弹窗 -->
 <div id="new-dm-dialog" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:200;justify-content:center;align-items:center">
-  <div style="background:#16213e;border-radius:12px;padding:24px 28px;width:360px;text-align:center">
-    <h3 style="margin-bottom:16px;font-size:18px">新建消息</h3>
-    <div style="display:flex;gap:10px;margin-bottom:14px">
-      <button onclick="switchNewMsgTab('dm')" id="tab-new-dm" style="flex:1;padding:10px;border:2px solid #5c9ded;border-radius:8px;background:#0f3460;color:#fff;cursor:pointer;font-size:14px">新建聊天</button>
-      <button onclick="switchNewMsgTab('feedback')" id="tab-new-fb" style="flex:1;padding:10px;border:2px solid #333;border-radius:8px;background:#0d1b3e;color:#aaa;cursor:pointer;font-size:14px">新建反馈</button>
+  <div style="background:var(--bg-card);border-radius:12px;padding:24px 28px;width:360px;text-align:center;">
+    <h3 style="margin-bottom:14px;font-size:18px">发送私信</h3>
+    <input id="new-dm-to" type="text" placeholder="收件人用户名" maxlength="10" style="width:100%;padding:10px 12px;font-size:14px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-input);color:var(--text-primary);outline:none;margin-bottom:10px">
+    <textarea id="new-dm-content" placeholder="消息内容" maxlength="500" style="width:100%;height:80px;padding:10px 12px;font-size:14px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-input);color:var(--text-primary);outline:none;resize:none;margin-bottom:14px"></textarea>
+    <div style="display:flex;gap:10px">
+      <button onclick="closeNewDmDialog()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#555;color:#fff;cursor:pointer;font-size:14px">取消</button>
+      <button onclick="submitNewDm()" style="flex:1;padding:10px;border:none;border-radius:8px;background:var(--accent-blue);color:#fff;cursor:pointer;font-size:14px">发送</button>
     </div>
-    <div id="new-dm-form">
-      <input id="new-dm-to" type="text" placeholder="收件人用户名" maxlength="10" style="width:100%;padding:10px 12px;font-size:14px;border:1px solid #333;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;margin-bottom:10px">
-      <textarea id="new-dm-content" placeholder="消息内容" maxlength="500" style="width:100%;height:80px;padding:10px 12px;font-size:14px;border:1px solid #333;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;resize:none;margin-bottom:14px"></textarea>
-      <div style="display:flex;gap:10px">
-        <button onclick="closeNewDmDialog()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#333;color:#fff;cursor:pointer;font-size:14px">取消</button>
-        <button onclick="submitNewDm()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#0f3460;color:#fff;cursor:pointer;font-size:14px">发送</button>
-      </div>
+  </div>
+</div>
+
+<!-- 反馈弹窗 -->
+<div id="feedback-dialog" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:300;justify-content:center;align-items:center">
+  <div style="background:var(--bg-card);border-radius:12px;padding:28px 32px;width:420px;max-width:92vw;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 style="font-size:18px;">💬 意见反馈</h3>
+      <span onclick="closeFeedbackDialog()" style="cursor:pointer;font-size:20px;color:var(--text-muted);">✕</span>
     </div>
-    <div id="new-feedback-form" style="display:none">
-      <textarea id="new-feedback-content" placeholder="请输入反馈内容..." maxlength="1000" style="width:100%;height:120px;padding:10px 12px;font-size:14px;border:1px solid #333;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;resize:none;margin-bottom:14px"></textarea>
-      <div id="feedback-msg" style="font-size:12px;min-height:16px;margin-bottom:8px;color:#888"></div>
-      <div style="display:flex;gap:10px">
-        <button onclick="closeNewDmDialog()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#333;color:#fff;cursor:pointer;font-size:14px">取消</button>
-        <button onclick="submitFeedback()" style="flex:1;padding:10px;border:none;border-radius:8px;background:#2a6a3a;color:#fff;cursor:pointer;font-size:14px">提交反馈</button>
-      </div>
-    </div>
+    <textarea id="feedback-input" placeholder="请描述您的问题或建议..." maxlength="1000" style="width:100%;height:120px;padding:12px;font-size:14px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-input);color:var(--text-primary);outline:none;resize:none;margin-bottom:12px"></textarea>
+    <div id="feedback-msg" style="font-size:12px;min-height:18px;margin-bottom:10px;color:var(--text-muted)"></div>
+    <button onclick="submitFeedback()" style="width:100%;padding:12px;font-size:15px;border:none;border-radius:8px;background:var(--accent-blue);color:#fff;cursor:pointer;">提交反馈</button>
   </div>
 </div>
 
@@ -231,8 +233,26 @@
   </div>
 </div>
 
-<script src="game.js?v=5"></script>
-<script src="game2.js?v=5"></script>
-<script src="game3.js?v=5"></script>
+<!-- 注册成功介绍弹窗 -->
+<div id="welcome-dialog" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:300;justify-content:center;align-items:center">
+  <div style="background:var(--bg-card);border-radius:16px;padding:32px 36px;width:440px;max-width:92vw;box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+    <h2 style="text-align:center;margin-bottom:6px;font-size:22px;">🎉 欢迎加入！</h2>
+    <p style="text-align:center;color:var(--text-muted);font-size:13px;margin-bottom:20px;">在线棋类对战平台</p>
+    <div style="line-height:1.8;font-size:14px;color:var(--text-secondary);margin-bottom:24px;">
+      <p style="margin-bottom:10px;">我们支持 <b style="color:var(--accent-blue)">四种棋类游戏</b>：</p>
+      <p>♟ <b>五子棋</b> — 支持禁手规则，可人机对战</p>
+      <p>⚫ <b>围棋</b> — 19路标准棋盘，领地计分</p>
+      <p>♜ <b>中国象棋</b> — 标准规则，将军/将杀判定</p>
+      <p>♔ <b>国际象棋</b> — 王车易位、兵升变等完整规则</p>
+      <p style="margin-top:12px;">每种游戏都有 <b style="color:var(--accent-green)">简单/普通/困难</b> 三档AI，也可与真人对战。</p>
+      <p style="margin-top:12px;">💬 遇到问题或有建议？点击私信面板的 <b style="color:var(--accent-yellow)">"新建反馈"</b>，管理员会尽快回复你！</p>
+    </div>
+    <button onclick="closeWelcomeDialog()" style="width:100%;padding:12px;font-size:15px;border:none;border-radius:8px;background:var(--accent-blue);color:#fff;cursor:pointer;">开始体验</button>
+  </div>
+</div>
+
+<script src="game.js?v=7"></script>
+<script src="game2.js?v=7"></script>
+<script src="game3.js?v=8"></script>
 </body>
 </html>

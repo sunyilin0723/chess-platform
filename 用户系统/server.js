@@ -1151,4 +1151,4 @@ app.post('/api/admin/force-delete', adminAuth, async (req, res) => {
 
 // ==================== 启动 ====================
 const PORT = process.env.GAME_PORT || 3002;
-server.listen(PORT, () => { console.log(`五子棋(用户版)运行在 http://localhost:${PORT}`); });
+server.listen(PORT, '::', () => { console.log(`五子棋(用户版)运行在 http://localhost:${PORT} (IPv6: http://[::1]:${PORT})`); });

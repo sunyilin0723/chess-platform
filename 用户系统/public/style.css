@@ -188,3 +188,6 @@ canvas{display:block;border-radius:8px;box-shadow:0 0 20px var(--board-shadow)}
 .dm-bubble-them{display:inline-block;max-width:80%;padding:8px 12px;border-radius:8px;font-size:13px;background:var(--bg-hover);color:var(--text-primary)}
 .dm-section-title{font-size:14px;color:var(--text-secondary);margin-bottom:8px}
 .appeal-reason{color:var(--text-secondary);margin-bottom:4px}
+/* 反馈弹窗 */
+#feedback-dialog{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:300;justify-content:center;align-items:center}
+#feedback-dialog textarea{font-family:'Microsoft YaHei',sans-serif}

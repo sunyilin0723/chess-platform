@@ -92,8 +92,10 @@ async function doRegister(){
   if(d.error)return authError(d.error);
   token=d.token;currentUser=d.username;localStorage.setItem('gomoku_token',token);localStorage.setItem('gomoku_user',currentUser);
   document.getElementById('lobby-greeting').textContent='欢迎，'+currentUser;showView('lobby');
+  document.getElementById('welcome-dialog').style.display='flex';
   }catch(e){authError(e.message)}
 }
+function closeWelcomeDialog(){document.getElementById('welcome-dialog').style.display='none'}
 async function logout(){
   try{await apiFetch('/api/logout',{method:'POST'})}catch{}
   if(ws){ ws.close(); ws=null; }

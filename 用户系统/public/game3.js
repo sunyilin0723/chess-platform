@@ -327,9 +327,6 @@ window.openNewDmDialog=function(){
   document.getElementById('new-dm-dialog').style.display='flex';
   document.getElementById('new-dm-to').value='';
   document.getElementById('new-dm-content').value='';
-  document.getElementById('new-feedback-content').value='';
-  document.getElementById('feedback-msg').textContent='';
-  switchNewMsgTab('dm');
 };
 window.closeNewDmDialog=function(){
   document.getElementById('new-dm-dialog').style.display='none';
@@ -359,15 +356,23 @@ window.submitNewDm=function(){
     if(dmConvOpen&&currentDmUser===to)loadDmMessages(to);
   }).catch(e=>alert(e.message));
 };
+window.openFeedbackDialog=function(){
+  document.getElementById('feedback-dialog').style.display='flex';
+  document.getElementById('feedback-input').value='';
+  document.getElementById('feedback-msg').textContent='';
+};
+window.closeFeedbackDialog=function(){
+  document.getElementById('feedback-dialog').style.display='none';
+};
 window.submitFeedback=function(){
-  const content=document.getElementById('new-feedback-content').value.trim();
+  const content=document.getElementById('feedback-input').value.trim();
   const msgEl=document.getElementById('feedback-msg');
   if(!content){msgEl.textContent='请输入反馈内容';msgEl.style.color='#e74c3c';return}
   apiFetch('/api/feedback',{method:'POST',body:JSON.stringify({content})}).then(()=>{
     msgEl.textContent='反馈已提交，管理员回复后会通过站内通知告知';
     msgEl.style.color='#2ecc71';
-    document.getElementById('new-feedback-content').value='';
-    setTimeout(()=>closeNewDmDialog(),1500);
+    document.getElementById('feedback-input').value='';
+    setTimeout(()=>closeFeedbackDialog(),1500);
   }).catch(e=>{msgEl.textContent=e.message;msgEl.style.color='#e74c3c'});
 };
 window.onNewDm=function(from){
