@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>在线棋类对战</title>
-<link rel="stylesheet" href="style.css?v=6">
+<link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 <div id="navbar">
@@ -15,7 +15,7 @@
     <span class="logo">棋类对战</span>
     <span onclick="openFeedbackDialog()" style="cursor:pointer;font-size:13px;color:var(--accent-yellow);border:1px solid var(--accent-yellow);border-radius:6px;padding:4px 12px;transition:all 0.2s;">💬 反馈</span>
   </div>
-  <div class="nav-links">
+  <div class="nav-links" id="nav-links">
     <span onclick="showView('lobby')">大厅</span>
     <span onclick="showView('leaderboard')">排行榜</span>
     <span onclick="showView('profile')">个人主页</span>
@@ -25,6 +25,11 @@
     <button id="theme-toggle" onclick="toggleTheme()"><span class="icon-sun">☀️</span><span class="icon-moon">🌙</span></button>
     <span onclick="logout()">退出</span>
   </div>
+  <button class="hamburger-btn" onclick="toggleMobileMenu()">
+    <span></span>
+    <span></span>
+    <span></span>
+  </button>
   <div id="notif-panel">
     <div style="padding:12px 16px;border-bottom:1px solid #222;display:flex;justify-content:space-between;align-items:center">
       <span style="font-weight:bold">站内消息</span>

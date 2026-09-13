@@ -43,7 +43,8 @@
 
 /* ==================== 基础样式 ==================== */
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Microsoft YaHei',sans-serif;background:var(--bg-primary);color:var(--text-primary);min-height:100vh;transition:all 0.3s}
+body{font-family:'Microsoft YaHei',sans-serif;background:var(--bg-primary);color:var(--text-primary);min-height:100vh;transition:all 0.3s;-webkit-tap-highlight-color:transparent}
+button,a,[onclick]{touch-action:manipulation}
 #navbar{display:none;width:100%;padding:12px 24px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);align-items:center;justify-content:space-between;position:relative}
 #navbar.show{display:flex}
 #navbar .logo{font-size:18px;font-weight:bold;color:var(--text-primary)}
@@ -84,7 +85,7 @@ body{font-family:'Microsoft YaHei',sans-serif;background:var(--bg-primary);color
 #ai-difficulty span{color:var(--text-secondary);font-size:13px}
 #ai-difficulty button{padding:8px 14px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-input);color:var(--text-secondary);cursor:pointer;font-size:13px}
 #ai-difficulty button.selected{border-color:var(--accent-red);color:var(--accent-red)}
-#forbidden-select{display:flex;gap:8px;margin-bottom:16px;justify-content:center;align-items:center;overflow:hidden;max-height:50px;opacity:1;transition:max-height .3s ease,opacity .3s ease,margin .3s ease}
+#forbidden-select{display:flex;gap:8px;margin-bottom:16px;justify-content:center;align-items:center;flex-wrap:wrap;overflow:hidden;max-height:80px;opacity:1;transition:max-height .3s ease,opacity .3s ease,margin .3s ease}
 #forbidden-select.hidden{max-height:0;opacity:0;margin-bottom:0}
 #forbidden-select span{color:var(--text-secondary);font-size:13px}
 #forbidden-select button{padding:8px 14px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-input);color:var(--text-secondary);cursor:pointer;font-size:13px}
@@ -99,7 +100,7 @@ body{font-family:'Microsoft YaHei',sans-serif;background:var(--bg-primary);color
 .timer-box.active{color:var(--accent-red);font-weight:bold}
 #status{font-size:16px;margin:6px 0;min-height:22px;text-align:center}
 .color-dot{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:middle;margin-right:4px;border:2px solid #555}
-canvas{display:block;border-radius:8px;box-shadow:0 0 20px var(--board-shadow)}
+canvas{display:block;border-radius:8px;box-shadow:0 0 20px var(--board-shadow);touch-action:manipulation}
 #game-info{margin-top:8px;display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap}
 #game-btns{display:flex;flex-wrap:wrap;justify-content:center;gap:4px;max-width:420px}
 #game-btns button{padding:6px 14px;font-size:13px;border:none;border-radius:6px;cursor:pointer}
@@ -191,3 +192,344 @@ canvas{display:block;border-radius:8px;box-shadow:0 0 20px var(--board-shadow)}
 /* 反馈弹窗 */
 #feedback-dialog{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:300;justify-content:center;align-items:center}
 #feedback-dialog textarea{font-family:'Microsoft YaHei',sans-serif}
+
+/* 汉堡菜单按钮 */
+.hamburger-btn {
+  display: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 200;
+}
+.hamburger-btn span {
+  display: block;
+  width: 22px;
+  height: 2px;
+  background: var(--text-primary);
+  border-radius: 2px;
+  transition: all 0.3s;
+  transform-origin: center;
+}
+.hamburger-btn.active span:nth-child(1) {
+  transform: translateY(6px) rotate(45deg);
+}
+.hamburger-btn.active span:nth-child(2) {
+  opacity: 0;
+  transform: scaleX(0);
+}
+.hamburger-btn.active span:nth-child(3) {
+  transform: translateY(-6px) rotate(-45deg);
+}
+
+/* ==================== 移动端适配 ==================== */
+@media (max-width: 768px) {
+  /* 导航栏 - 垂直堆叠 + 汉堡菜单 */
+  #navbar {
+    padding: 10px 14px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  #navbar .logo {
+    font-size: 16px;
+  }
+  .hamburger-btn {
+    display: flex;
+  }
+  .nav-links {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    top: 48px;
+    left: 0;
+    right: 0;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 0 16px;
+    gap: 0;
+    z-index: 150;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 0.35s ease, opacity 0.3s ease, padding 0.3s ease;
+  }
+  .nav-links.show {
+    max-height: 400px;
+    opacity: 1;
+    padding: 12px 16px;
+    gap: 12px;
+  }
+  .nav-links > * {
+    opacity: 0;
+    transform: translateY(-8px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .nav-links.show > * {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .nav-links.show > *:nth-child(1) { transition-delay: 0.05s }
+  .nav-links.show > *:nth-child(2) { transition-delay: 0.1s }
+  .nav-links.show > *:nth-child(3) { transition-delay: 0.15s }
+  .nav-links.show > *:nth-child(4) { transition-delay: 0.2s }
+  .nav-links.show > *:nth-child(5) { transition-delay: 0.25s }
+  .nav-links.show > *:nth-child(6) { transition-delay: 0.3s }
+  .nav-links.show > *:nth-child(7) { transition-delay: 0.35s }
+  .nav-links.show > *:nth-child(8) { transition-delay: 0.4s }
+  #navbar > div:first-child {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  /* 通知/私信面板 */
+  #notif-panel, #dm-panel {
+    position: fixed;
+    top: 48px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: 60vh;
+    border-radius: 10px;
+    z-index: 180;
+  }
+
+  /* 页面卡片 */
+  .center-page {
+    min-height: calc(100vh - 60px);
+    padding: 12px;
+  }
+  .card {
+    padding: 20px;
+    width: 100%;
+    border-radius: 12px;
+  }
+  .lobby-card {
+    width: 100%;
+  }
+  .card input, .card button {
+    font-size: 16px;
+    padding: 12px;
+  }
+
+  /* 游戏选择滑块 */
+  .game-select-slider {
+    flex-wrap: nowrap;
+  }
+  .game-slider-item {
+    font-size: 12px !important;
+    padding: 10px 2px !important;
+  }
+  .timer-select {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .timer-select button {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .mode-select button {
+    font-size: 13px;
+    padding: 10px;
+  }
+
+  /* AI难度/禁手 */
+  #ai-difficulty {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  #ai-difficulty button {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  #forbidden-select {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  #forbidden-select span {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  #forbidden-select button {
+    padding: 6px 10px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  /* 游戏视图 */
+  #game-view .center-page {
+    padding: 6px;
+    min-height: auto;
+    justify-content: flex-start;
+    overflow-y: auto;
+  }
+  #players-info {
+    font-size: 13px;
+    gap: 10px;
+    margin: 4px 0;
+  }
+  .p-name {
+    padding: 3px 8px;
+    font-size: 13px;
+  }
+  #vs-text {
+    font-size: 12px;
+  }
+  #timer-bar {
+    gap: 12px;
+    font-size: 12px;
+  }
+  .timer-box {
+    padding: 3px 8px;
+  }
+  #status {
+    font-size: 14px;
+    margin: 4px 0;
+  }
+  canvas {
+    max-width: 100%;
+    height: auto !important;
+    border-radius: 6px;
+  }
+  #game-info {
+    margin-top: 6px;
+    gap: 6px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  #game-btns {
+    max-width: 100%;
+    gap: 4px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+  }
+  #game-btns button {
+    padding: 10px 6px;
+    font-size: 12px;
+    min-height: 40px;
+    border-radius: 6px;
+  }
+  #room-id {
+    font-size: 11px;
+    padding: 3px 8px;
+    align-self: center;
+  }
+  #chat-box {
+    margin-top: 6px;
+    width: 100%;
+    max-width: 100%;
+  }
+  #chat-msgs {
+    height: 60px;
+    font-size: 11px;
+    padding: 4px;
+  }
+  #chat-input {
+    padding: 10px;
+    font-size: 16px;
+  }
+  #chat-send {
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+
+  /* 排行榜 */
+  .lb-card {
+    width: 100%;
+  }
+  .lb-card th, .lb-card td {
+    padding: 8px 6px;
+    font-size: 12px;
+  }
+
+  /* 个人主页 */
+  .profile-card {
+    width: 100%;
+  }
+  .profile-header {
+    flex-direction: column;
+    text-align: center;
+    gap: 10px;
+  }
+  .avatar {
+    width: 50px;
+    height: 50px;
+    font-size: 24px;
+  }
+  .profile-name {
+    font-size: 18px;
+  }
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+  .stat-val {
+    font-size: 18px;
+  }
+  .stat-label {
+    font-size: 11px;
+  }
+
+  /* 弹窗 */
+  .choose-box {
+    padding: 20px;
+    margin: 16px;
+    width: auto;
+  }
+  .choose-btns {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .choose-btns button {
+    width: 100%;
+    padding: 12px;
+  }
+  .approval-box {
+    padding: 20px;
+    margin: 16px;
+    min-width: auto;
+    width: 90vw;
+  }
+  .approval-box .btns {
+    flex-direction: column;
+  }
+  .approval-box .btns button {
+    width: 100%;
+  }
+  #report-dialog > div, #welcome-dialog > div, #feedback-dialog > div,
+  #dm-conversation-dialog > div, #new-dm-dialog > div {
+    width: 92vw !important;
+    max-width: none !important;
+    padding: 20px !important;
+  }
+
+  /* 主题切换 */
+  #theme-toggle {
+    width: 44px;
+    height: 24px;
+  }
+  #theme-toggle::after {
+    width: 18px;
+    height: 18px;
+  }
+  [data-theme="light"] #theme-toggle::after {
+    left: 22px;
+  }
+}
+
+/* 超小屏幕 (< 400px) */
+@media (max-width: 400px) {
+  .game-slider-item {
+    font-size: 11px !important;
+    padding: 8px 1px !important;
+  }
+  #game-btns button {
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+  .timer-select button {
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+}

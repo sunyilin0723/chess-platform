@@ -31,6 +31,11 @@ document.addEventListener('DOMContentLoaded',()=>{
 });
 
 function showView(name){
+  // 关闭移动端菜单
+  const navLinks=document.getElementById('nav-links');
+  const hamburgerBtn=document.querySelector('.hamburger-btn');
+  if(navLinks) navLinks.classList.remove('show');
+  if(hamburgerBtn) hamburgerBtn.classList.remove('active');
   // 从游戏房间返回大厅时清理状态
   if(name==='lobby'){
     backToLobbyCalled=true;
@@ -252,3 +257,22 @@ function toggleTheme(){
   localStorage.setItem('gomoku_theme',next);
   if(board&&board.length&&typeof drawBoard==='function')drawBoard();
 }
+
+// 移动端菜单
+function toggleMobileMenu(){
+  const nav=document.getElementById('nav-links');
+  const btn=document.querySelector('.hamburger-btn');
+  if(nav) nav.classList.toggle('show');
+  if(btn) btn.classList.toggle('active');
+}
+// 点击菜单项后关闭菜单
+document.addEventListener('click',function(e){
+  if(window.innerWidth>768) return;
+  const nav=document.getElementById('nav-links');
+  const hamburger=document.querySelector('.hamburger-btn');
+  if(!nav||!hamburger) return;
+  if(!nav.contains(e.target)&&!hamburger.contains(e.target)){
+    nav.classList.remove('show');
+    hamburger.classList.remove('active');
+  }
+});
