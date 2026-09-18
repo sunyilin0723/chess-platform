@@ -48,7 +48,7 @@ function showView(name){
     board=[]; lastMove=null; gameOver=false; myColor=0; turn=0;
     playerNames={}; moveCount=0;
     window._chessSelected=null; window._intlChessSelected=null;
-    isAI=false; aiColor=0;
+    isAI=false; aiColor=0; isSpectator=false;
   }
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.getElementById(name+'-view').classList.add('active');

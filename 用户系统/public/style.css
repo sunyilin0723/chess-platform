@@ -85,7 +85,7 @@ button,a,[onclick]{touch-action:manipulation}
 #ai-difficulty span{color:var(--text-secondary);font-size:13px}
 #ai-difficulty button{padding:8px 14px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-input);color:var(--text-secondary);cursor:pointer;font-size:13px}
 #ai-difficulty button.selected{border-color:var(--accent-red);color:var(--accent-red)}
-#forbidden-select{display:flex;gap:8px;margin-bottom:16px;justify-content:center;align-items:center;flex-wrap:wrap;overflow:hidden;max-height:80px;opacity:1;transition:max-height .3s ease,opacity .3s ease,margin .3s ease}
+#forbidden-select{display:flex;gap:8px;margin-bottom:16px;justify-content:center;align-items:center;flex-wrap:nowrap;overflow:hidden;max-height:200px;opacity:1;transition:max-height .3s ease,opacity .3s ease,margin .3s ease}
 #forbidden-select.hidden{max-height:0;opacity:0;margin-bottom:0}
 #forbidden-select span{color:var(--text-secondary);font-size:13px}
 #forbidden-select button{padding:8px 14px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-input);color:var(--text-secondary);cursor:pointer;font-size:13px}
@@ -113,7 +113,7 @@ canvas{display:block;border-radius:8px;box-shadow:0 0 20px var(--board-shadow);t
 #btn-pass{background:rgba(46,204,113,0.2);color:var(--accent-green)}
 #chat-box{margin-top:8px;width:400px;max-width:90vw}
 #chat-msgs{height:80px;overflow-y:auto;background:var(--bg-secondary);border-radius:8px 8px 0 0;padding:6px;font-size:12px;color:var(--text-secondary);text-align:left}
-.msg{margin:2px 0}.msg-sys{color:var(--text-muted);font-style:italic}.msg-alert{color:var(--accent-red);font-weight:bold}
+.msg{margin:2px 0}.msg-sys{color:var(--text-muted);font-style:italic}.msg-alert{color:var(--accent-red);font-weight:bold}.msg-spec{color:#a78bfa;font-style:italic}
 #chat-row{display:flex}
 #chat-input{flex:1;padding:7px;border:none;border-radius:0 0 0 8px;background:var(--bg-input);color:var(--text-primary);font-size:12px;outline:none}
 #chat-send{padding:7px 12px;border:none;border-radius:0 0 8px 0;background:var(--accent-blue);color:#fff;cursor:pointer;font-size:12px}
@@ -498,7 +498,8 @@ canvas{display:block;border-radius:8px;box-shadow:0 0 20px var(--board-shadow);t
     width: 100%;
   }
   #report-dialog > div, #welcome-dialog > div, #feedback-dialog > div,
-  #dm-conversation-dialog > div, #new-dm-dialog > div {
+  #dm-conversation-dialog > div, #new-dm-dialog > div,
+  #join-choice-dialog > div {
     width: 92vw !important;
     max-width: none !important;
     padding: 20px !important;

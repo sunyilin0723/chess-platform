@@ -471,11 +471,12 @@ function intlUndoMove(board, undo) {
 }
 
 // AI走棋
-function intlGetAIMove(board, difficulty, lastMove) {
+function intlGetAIMove(board, difficulty, lastMove, aiColor) {
+  const color = aiColor || 2;
   const depths = { easy: 1, medium: 2, hard: 3 };
   const depth = depths[difficulty] || 1;
 
-  const moves = intlGetAllLegalMoves(board, 1, lastMove); // AI总是白方
+  const moves = intlGetAllLegalMoves(board, color, lastMove);
   if (moves.length === 0) return null;
 
   const sortedMoves = intlSortMoves(board, moves);
@@ -483,7 +484,9 @@ function intlGetAIMove(board, difficulty, lastMove) {
 
   for (const { fr, fc, tr, tc, special } of sortedMoves) {
     const { newLastMove, undo } = makeIntlMove(board, fr, fc, tr, tc, special, lastMove);
-    const score = intlMinimax(board, depth - 1, -Infinity, Infinity, false, newLastMove);
+    // AI 为 color 时最大化，对手最小化
+    const opponent = color === 1 ? 2 : 1;
+    const score = intlMinimaxForColor(board, depth - 1, -Infinity, Infinity, opponent, color, newLastMove);
     intlUndoMove(board, undo);
 
     const randomFactor = difficulty === 'easy' ? (Math.random() * 40 - 20) : 0;
@@ -493,6 +496,46 @@ function intlGetAIMove(board, difficulty, lastMove) {
     }
   }
   return bestMove;
+}
+
+// 带颜色的 minimax：toMove 为当前该走棋的一方，aiColor 为 AI 方
+function intlMinimaxForColor(board, depth, alpha, beta, toMove, aiColor, lastMove) {
+  if (intlCheckmate(board, toMove, lastMove)) {
+    return toMove === aiColor ? -99999 + depth : 99999 - depth;
+  }
+  if (intlStalemate(board, toMove, lastMove)) return 0;
+  if (depth === 0) {
+    return aiColor === 1 ? intlEvaluateBoard(board) : -intlEvaluateBoard(board);
+  }
+
+  const moves = intlGetAllLegalMoves(board, toMove, lastMove);
+  const sortedMoves = intlSortMoves(board, moves);
+  const isAITurn = toMove === aiColor;
+  const next = toMove === 1 ? 2 : 1;
+
+  if (isAITurn) {
+    let maxEval = -Infinity;
+    for (const { fr, fc, tr, tc, special } of sortedMoves) {
+      const { newLastMove, undo } = makeIntlMove(board, fr, fc, tr, tc, special, lastMove);
+      const eval_ = intlMinimaxForColor(board, depth - 1, alpha, beta, next, aiColor, newLastMove);
+      intlUndoMove(board, undo);
+      maxEval = Math.max(maxEval, eval_);
+      alpha = Math.max(alpha, eval_);
+      if (beta <= alpha) break;
+    }
+    return maxEval;
+  } else {
+    let minEval = Infinity;
+    for (const { fr, fc, tr, tc, special } of sortedMoves) {
+      const { newLastMove, undo } = makeIntlMove(board, fr, fc, tr, tc, special, lastMove);
+      const eval_ = intlMinimaxForColor(board, depth - 1, alpha, beta, next, aiColor, newLastMove);
+      intlUndoMove(board, undo);
+      minEval = Math.min(minEval, eval_);
+      beta = Math.min(beta, eval_);
+      if (beta <= alpha) break;
+    }
+    return minEval;
+  }
 }
 
 module.exports = { createIntlChessBoard, intlPieceColor, getIntlChessMoves, getIntlChessLegalMoves, intlHasLegalMoves, makeIntlMove, intlCheck, intlCheckmate, intlStalemate, intlGetAIMove };
