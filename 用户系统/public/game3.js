@@ -138,7 +138,7 @@ function drawChess(){
     ctx.beginPath();ctx.arc(x,y,cw*0.42,0,Math.PI*2);ctx.stroke();
   }
   function chessClickHandler(e){
-    if(gameOver||myColor!==turn||gameType!=='chess')return;
+    if(isSpectator||gameOver||myColor!==turn||gameType!=='chess')return;
     const rect=canvas.getBoundingClientRect();
     const mx=(e.clientX-rect.left)*(canvas.width/rect.width);
     const my=(e.clientY-rect.top)*(canvas.height/rect.height);
@@ -187,7 +187,7 @@ function drawIntlChess(){
 }
 canvas.removeEventListener('click',window._intlChessClickBound);
 window._intlChessClickBound=function(e){
-  if(gameOver||myColor!==turn||gameType!=='intl_chess')return;
+  if(isSpectator||gameOver||myColor!==turn||gameType!=='intl_chess')return;
   const rect=canvas.getBoundingClientRect();
   const mx=(e.clientX-rect.left)*(canvas.width/rect.width);
   const my=(e.clientY-rect.top)*(canvas.height/rect.height);
@@ -208,7 +208,7 @@ window._intlChessClickBound=function(e){
 };
 canvas.addEventListener('click',window._intlChessClickBound);
 canvas.addEventListener('click',e=>{
-  if(gameOver||myColor!==turn||gameType==='chess'||gameType==='intl_chess')return;
+  if(isSpectator||gameOver||myColor!==turn||gameType==='chess'||gameType==='intl_chess')return;
   const rect=canvas.getBoundingClientRect();
   const mx=(e.clientX-rect.left)*(canvas.width/rect.width);
   const my=(e.clientY-rect.top)*(canvas.height/rect.height);
@@ -228,7 +228,7 @@ canvas.addEventListener('click',e=>{
   }
 });
 canvas.addEventListener('mousemove',e=>{
-  if(gameOver||myColor!==turn||gameType==='chess'||gameType==='intl_chess'){canvas.style.cursor='not-allowed';return}
+  if(isSpectator||gameOver||myColor!==turn||gameType==='chess'||gameType==='intl_chess'){canvas.style.cursor='not-allowed';return}
   canvas.style.cursor='pointer';
 });
 
@@ -330,21 +330,6 @@ window.openNewDmDialog=function(){
 };
 window.closeNewDmDialog=function(){
   document.getElementById('new-dm-dialog').style.display='none';
-};
-window.switchNewMsgTab=function(tab){
-  const dmForm=document.getElementById('new-dm-form');
-  const fbForm=document.getElementById('new-feedback-form');
-  const tabDm=document.getElementById('tab-new-dm');
-  const tabFb=document.getElementById('tab-new-fb');
-  if(tab==='dm'){
-    dmForm.style.display='block';fbForm.style.display='none';
-    tabDm.style.cssText='flex:1;padding:10px;border:2px solid #5c9ded;border-radius:8px;background:#0f3460;color:#fff;cursor:pointer;font-size:14px';
-    tabFb.style.cssText='flex:1;padding:10px;border:2px solid #333;border-radius:8px;background:#0d1b3e;color:#aaa;cursor:pointer;font-size:14px';
-  } else {
-    dmForm.style.display='none';fbForm.style.display='block';
-    tabDm.style.cssText='flex:1;padding:10px;border:2px solid #333;border-radius:8px;background:#0d1b3e;color:#aaa;cursor:pointer;font-size:14px';
-    tabFb.style.cssText='flex:1;padding:10px;border:2px solid #2a6a3a;border-radius:8px;background:#1a4a2a;color:#fff;cursor:pointer;font-size:14px';
-  }
 };
 window.submitNewDm=function(){
   const to=document.getElementById('new-dm-to').value.trim();
@@ -719,15 +704,6 @@ async function appealReport(reportId){
   try{await apiFetch('/api/appeal',{method:'POST',body:JSON.stringify({reportId,reason})});alert('申诉已提交');loadMyReports()}catch(e){alert(e.message)}
 }
 async function cancelReport(id){try{await apiFetch('/api/report/cancel',{method:'POST',body:JSON.stringify({reportId:id})});loadMyReports()}catch(e){alert(e.message)}}
-async function submitAppeal(){
-  const reason=document.getElementById('appeal-reason').value.trim();
-  if(!reason){document.getElementById('appeal-msg').textContent='请填写申诉理由';document.getElementById('appeal-msg').style.color='#e74c3c';return}
-  try{const r=await apiFetch('/api/appeal',{method:'POST',body:JSON.stringify({reason})});
-  if(r.error){document.getElementById('appeal-msg').textContent=r.error;document.getElementById('appeal-msg').style.color='#e74c3c';return}
-  document.getElementById('appeal-msg').textContent='申诉已提交，等待管理员审核';document.getElementById('appeal-msg').style.color='#2ecc71';
-  document.getElementById('appeal-reason').value='';
-  }catch(e){document.getElementById('appeal-msg').textContent=e.message;document.getElementById('appeal-msg').style.color='#e74c3c'}
-}
 async function loadAppealHistory(){
   const el=document.getElementById('appeal-history');if(!el)return;
   try{const list=await apiFetch('/api/appeal/mine');

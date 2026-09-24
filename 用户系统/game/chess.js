@@ -195,13 +195,12 @@ function sortMoves(board, moves) {
 function chessMinimax(board, depth, alpha, beta, isMaximizing, aiColor) {
   const opponent = aiColor === 1 ? 2 : 1; const currentColor = isMaximizing ? aiColor : opponent;
   if (!chessHasLegalMove(board, currentColor)) {
-    const king = chessFindKing(board, currentColor);
-    if (king && chessIsAttacked(board, king[0], king[1], opponent)) return isMaximizing ? -99999 + depth : 99999 - depth;
-    return 0;
+    // 无合法着法（将杀或困毙）均判负，与服务端胜负判定一致
+    return isMaximizing ? -99999 + depth : 99999 - depth;
   }
   if (depth === 0) return chessEvaluateBoard(board, aiColor);
   const moves = chessGetAllLegalMoves(board, currentColor);
-  if (moves.length === 0) return chessEvaluateBoard(board, aiColor);
+  if (moves.length === 0) return isMaximizing ? -99999 + depth : 99999 - depth;
   const sortedMoves = sortMoves(board, moves);
   if (isMaximizing) {
     let maxEval = -Infinity;

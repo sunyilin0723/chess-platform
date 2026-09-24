@@ -70,8 +70,12 @@ function createRoom(roomId, gameType, timerSeconds, mode, difficulty, forbidden)
     goCaptures: [0, 0], mode: mode || 'pvp', difficulty: difficulty || 'easy', aiColor: 0,
     forbidden: forbidden || false,
     intlLastMove: null,
+    keyBeforeLast: null, // 简单劫：上一手落子前的棋盘指纹
   };
 }
+
+// 棋盘指纹（用于简单劫检测）
+function boardKey(b) { return b.map(row => row.join('')).join(';'); }
 
 function getPlayerColor(room, ws) {
   const p = room.players.find(p => p.ws === ws);
@@ -121,7 +125,6 @@ function cleanupRoom(room) { stopTimer(room); }
 // 观战者加入房间
 function joinAsSpectator(ws, room, name) {
   room.spectators.push({ ws, name });
-  currentRoom = room;
   // 发送当前房间完整状态
   ws.send(JSON.stringify({
     type: 'joined', spectator: true, room: room.id,
@@ -145,13 +148,16 @@ function resetRoomState(room) {
   room.gameOver = false; room.started = false; room.choosing = false;
   room.passCount = 0; room.lastMove = null; room.intlLastMove = null;
   room.goCaptures = [0, 0];
+  room.keyBeforeLast = null;
   room.timeLeft = [room.timerSeconds || 0, room.timerSeconds || 0];
 }
 
 // 玩家加入房间（对局）
 function joinAsPlayer(ws, room, name, token) {
-  // 清理断线的死连接
-  room.players = room.players.filter(p => p.ws && p.ws.readyState === 1);
+  // 同一连接重复 join：先移除旧条目，避免一人控制双方
+  room.players = room.players.filter(p => p.ws !== ws);
+  // 清理断线死连接（保留 AI 条目 ws:null）
+  room.players = room.players.filter(p => p.isAI || (p.ws && p.ws.readyState === 1));
   const aliveColors = room.players.map(p => p.color);
   if (!aliveColors.includes(1)) { delete room.names[1]; delete room.tokens[1]; }
   if (!aliveColors.includes(2)) { delete room.names[2]; delete room.tokens[2]; }
@@ -175,12 +181,12 @@ function joinAsPlayer(ws, room, name, token) {
   room.players.push({ ws, color });
   room.names[color] = name;
   room.tokens[color] = token || '';
-  currentRoom = room;
 
   ws.send(JSON.stringify({ type: 'joined', color, room: room.id, names: room.names, gameType: room.gameType, size: room.size, timerSeconds: room.timerSeconds, board: room.board, mode: room.mode, difficulty: room.difficulty }));
 
-  // 人机对战模式
-  if (room.mode === 'pve' && room.players.length === 1) {
+  // 开局设置只在对局未开始时执行（防止中途重连重复 push AI / 重发 choose_first）
+  const humanCount = room.players.filter(p => !p.isAI).length;
+  if (room.mode === 'pve' && humanCount === 1 && !room.players.some(p => p.isAI) && !room.started) {
     const aiColor = color === 1 ? 2 : 1;
     room.aiColor = aiColor;
     room.names[aiColor] = 'AI (' + (room.difficulty === 'easy' ? '简单' : room.difficulty === 'medium' ? '普通' : '困难') + ')';
@@ -188,9 +194,8 @@ function joinAsPlayer(ws, room, name, token) {
     room.started = true; room.choosing = true;
     broadcast(room, { type: 'names', names: room.names, gameType: room.gameType });
     const p1 = room.players.find(p => p.color === 1);
-    // 只给需要选择的玩家发 choose_first，不广播 waiting_choice（PvE 无对手）
     if (p1 && p1.ws) p1.ws.send(JSON.stringify({ type: 'choose_first' }));
-  } else if (room.players.length === 2) {
+  } else if (room.mode !== 'pve' && room.players.length === 2 && !room.started) {
     room.started = true; room.choosing = true;
     broadcast(room, { type: 'names', names: room.names, gameType: room.gameType });
     const p1 = room.players.find(p => p.color === 1);
@@ -606,7 +611,7 @@ wss.on('connection', (ws) => {
       }
 
     if (msg.type === 'choose_first') {
-      const room = findRoomByWs(ws) || currentRoom;
+      const room = findRoomByWs(ws);
       if (!room || !room.choosing) return;
       if (getPlayerColor(room, ws) !== 1) return;
       room.choosing = false;
@@ -631,7 +636,7 @@ wss.on('connection', (ws) => {
       if (room.mode === 'pve' && room.aiColor === 1 && room.gameType === 'gomoku') {
         setTimeout(() => {
           if (room.gameOver) return;
-          const aiMove = gomokuAI(room.board, room.aiColor, room.difficulty, room.size);
+          const aiMove = gomokuAI(room.board, room.aiColor, room.difficulty, room.size, room.forbidden);
           if (aiMove) {
             const [aiR, aiC] = aiMove;
             if (room.forbidden && room.aiColor === 1) {
@@ -707,10 +712,13 @@ wss.on('connection', (ws) => {
             const aiTestBoard = room.board.map(row => [...row]);
             aiTestBoard[aiR][aiC] = room.aiColor;
             const aiResult = goRemoveCaptures(aiTestBoard, aiR, aiC, room.aiColor, room.size);
-            if (aiResult !== -1) {
+            const koBlocked = room.keyBeforeLast && boardKey(aiTestBoard) === room.keyBeforeLast;
+            if (aiResult !== -1 && !koBlocked) {
+              const aiOldKey = boardKey(room.board);
               room.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: room.aiColor, board: room.board.map(row => [...row]), goCaptures: [...room.goCaptures] });
               room.board[aiR][aiC] = room.aiColor;
               goRemoveCaptures(room.board, aiR, aiC, room.aiColor, room.size);
+              room.keyBeforeLast = aiOldKey;
               room.goCaptures[room.aiColor - 1] += aiResult;
               room.lastMove = [aiR, aiC]; room.moveCount++; room.passCount = 0;
               room.turn = room.aiColor === 1 ? 2 : 1;
@@ -767,7 +775,7 @@ wss.on('connection', (ws) => {
         } else if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
           setTimeout(() => {
             if (currentRoom.gameOver) return;
-            const aiMove = gomokuAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size);
+            const aiMove = gomokuAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size, currentRoom.forbidden);
             if (aiMove) {
               const [aiR, aiC] = aiMove;
               // AI禁手检查（只对黑棋生效）
@@ -808,9 +816,15 @@ wss.on('connection', (ws) => {
         testBoard[r][c] = myColor;
         const result = goRemoveCaptures(testBoard, r, c, myColor, currentRoom.size);
         if (result === -1) return;
+        // 简单劫：新棋面不得与上一手落子前的棋面相同
+        if (currentRoom.keyBeforeLast && boardKey(testBoard) === currentRoom.keyBeforeLast) {
+          return ws.send(JSON.stringify({ type: 'error', msg: '劫争：不能立即提回' }));
+        }
+        const oldKey = boardKey(currentRoom.board);
         currentRoom.moveHistory.push({ type: 'move', r, c, color: myColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures] });
         currentRoom.board[r][c] = myColor;
         goRemoveCaptures(currentRoom.board, r, c, myColor, currentRoom.size);
+        currentRoom.keyBeforeLast = oldKey;
         const opponent = myColor === 1 ? 2 : 1;
         currentRoom.goCaptures[myColor - 1] += result;
         currentRoom.lastMove = [r, c]; currentRoom.moveCount++; currentRoom.passCount = 0;
@@ -826,13 +840,17 @@ wss.on('connection', (ws) => {
               const aiTestBoard = currentRoom.board.map(row => [...row]);
               aiTestBoard[aiR][aiC] = currentRoom.aiColor;
               aiResult = goRemoveCaptures(aiTestBoard, aiR, aiC, currentRoom.aiColor, currentRoom.size);
-              if (aiResult === -1) aiMove = null; // 自杀着法，改为pass
+              // 自杀或劫争着法，改为pass
+              if (aiResult === -1) aiMove = null;
+              else if (currentRoom.keyBeforeLast && boardKey(aiTestBoard) === currentRoom.keyBeforeLast) aiMove = null;
             }
             if (aiMove) {
               const [aiR, aiC] = aiMove;
+              const aiOldKey = boardKey(currentRoom.board);
               currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures] });
               currentRoom.board[aiR][aiC] = currentRoom.aiColor;
               goRemoveCaptures(currentRoom.board, aiR, aiC, currentRoom.aiColor, currentRoom.size);
+              currentRoom.keyBeforeLast = aiOldKey;
               currentRoom.goCaptures[currentRoom.aiColor - 1] += aiResult;
               currentRoom.lastMove = [aiR, aiC]; currentRoom.moveCount++; currentRoom.passCount = 0;
               currentRoom.turn = currentRoom.aiColor === 1 ? 2 : 1;
@@ -1008,13 +1026,17 @@ wss.on('connection', (ws) => {
             const aiTestBoard = currentRoom.board.map(row => [...row]);
             aiTestBoard[aiR][aiC] = currentRoom.aiColor;
             aiResult = goRemoveCaptures(aiTestBoard, aiR, aiC, currentRoom.aiColor, currentRoom.size);
-            if (aiResult === -1) aiMove = null; // 自杀着法，改为pass
+            // 自杀或劫争着法，改为pass
+            if (aiResult === -1) aiMove = null;
+            else if (currentRoom.keyBeforeLast && boardKey(aiTestBoard) === currentRoom.keyBeforeLast) aiMove = null;
           }
           if (aiMove) {
             const [aiR, aiC] = aiMove;
+            const aiOldKey = boardKey(currentRoom.board);
             currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures] });
             currentRoom.board[aiR][aiC] = currentRoom.aiColor;
             goRemoveCaptures(currentRoom.board, aiR, aiC, currentRoom.aiColor, currentRoom.size);
+            currentRoom.keyBeforeLast = aiOldKey;
             currentRoom.goCaptures[currentRoom.aiColor - 1] += aiResult;
             currentRoom.lastMove = [aiR, aiC]; currentRoom.moveCount++; currentRoom.passCount = 0;
             currentRoom.turn = currentRoom.aiColor === 1 ? 2 : 1;
@@ -1047,6 +1069,7 @@ wss.on('connection', (ws) => {
       const currentRoom = findRoomByWs(ws);
       if (!currentRoom || currentRoom.gameOver) return;
       const myColor = getPlayerColor(currentRoom, ws);
+      if (myColor !== 1 && myColor !== 2) return; // 观战者不可认输
       currentRoom.gameOver = true; stopTimer(currentRoom);
       const winner = myColor === 1 ? 2 : 1;
       const wName = currentRoom.names[winner], lName = currentRoom.names[myColor];
@@ -1060,20 +1083,29 @@ wss.on('connection', (ws) => {
       const currentRoom = findRoomByWs(ws);
       if (!currentRoom || currentRoom.gameOver) return;
       const myColor = getPlayerColor(currentRoom, ws);
+      if (myColor !== 1 && myColor !== 2) return; // 观战者不可悔棋
       if (currentRoom.undoCount[myColor - 1] >= 3) { ws.send(JSON.stringify({ type: 'error', msg: '每局最多悔棋3次' })); return; }
       if (currentRoom.moveHistory.length === 0) { ws.send(JSON.stringify({ type: 'error', msg: '没有可悔棋的步骤' })); return; }
       if (currentRoom.pendingUndo) { ws.send(JSON.stringify({ type: 'error', msg: '已有待处理的悔棋请求' })); return; }
       currentRoom.pendingUndo = { from: myColor };
-      // 人机对战：AI自动同意悔棋
+      // 人机对战：AI自动同意悔棋（撤到玩家自己的上一步为止，避免玩家连走两手）
       if (currentRoom.mode === 'pve') {
-        const last = currentRoom.moveHistory.pop();
-        if (last && last.board) currentRoom.board = last.board.map(row => [...row]);
-        if (last && last.goCaptures) currentRoom.goCaptures = [...last.goCaptures];
-        if (last && last.type !== 'pass') currentRoom.moveCount = Math.max(0, currentRoom.moveCount - 1);
+        let popped = 0, undoMoves = 0;
+        while (currentRoom.moveHistory.length > 0) {
+          const last = currentRoom.moveHistory.pop();
+          if (last.board) currentRoom.board = last.board.map(row => [...row]);
+          if (last.goCaptures) currentRoom.goCaptures = [...last.goCaptures];
+          if (last.type !== 'pass') undoMoves++;
+          popped++;
+          if (last.color === myColor) break; // 撤销到玩家自己的那步
+          if (popped >= 4) break; // 安全阀
+        }
+        currentRoom.moveCount = Math.max(0, currentRoom.moveCount - undoMoves);
         currentRoom.undoCount[myColor - 1]++;
         currentRoom.turn = myColor;
         currentRoom.lastMove = null;
         currentRoom.intlLastMove = null;
+        currentRoom.keyBeforeLast = null;
         currentRoom.pendingUndo = null;
         broadcast(currentRoom, { type: 'undo_approved', turn: currentRoom.turn, board: currentRoom.board, moveCount: currentRoom.moveCount });
         return;
@@ -1088,6 +1120,7 @@ wss.on('connection', (ws) => {
       const currentRoom = findRoomByWs(ws);
       if (!currentRoom || !currentRoom.pendingUndo) return;
       const myColor = getPlayerColor(currentRoom, ws);
+      if (myColor !== 1 && myColor !== 2) return; // 观战者不可响应
       if (myColor !== (currentRoom.pendingUndo.from === 1 ? 2 : 1)) return;
       if (msg.approve) {
         for (let i = 0; i < 1 && currentRoom.moveHistory.length > 0; i++) {
@@ -1111,13 +1144,14 @@ wss.on('connection', (ws) => {
       const currentRoom = findRoomByWs(ws);
       if (!currentRoom || currentRoom.gameOver) return;
       const myColor = getPlayerColor(currentRoom, ws);
+      if (myColor !== 1 && myColor !== 2) return; // 观战者不可求和
       if (currentRoom.drawCount[myColor - 1] >= 3) { ws.send(JSON.stringify({ type: 'error', msg: '每局最多求和3次' })); return; }
       if (currentRoom.pendingDraw) { ws.send(JSON.stringify({ type: 'error', msg: '已有待处理的求和请求' })); return; }
       // 人机对战：AI拒绝求和
       if (currentRoom.mode === 'pve') {
         currentRoom.drawCount[myColor - 1]++;
         ws.send(JSON.stringify({ type: 'draw_rejected' }));
-        addChat(currentRoom, { type: 'chat', color: 0, text: 'AI拒绝了求和请求' });
+        broadcast(currentRoom, { type: 'chat', color: 0, text: 'AI拒绝了求和请求' });
         return;
       }
       currentRoom.pendingDraw = { from: myColor };
@@ -1131,6 +1165,7 @@ wss.on('connection', (ws) => {
       const currentRoom = findRoomByWs(ws);
       if (!currentRoom || !currentRoom.pendingDraw) return;
       const myColor = getPlayerColor(currentRoom, ws);
+      if (myColor !== 1 && myColor !== 2) return; // 观战者不可响应
       if (myColor !== (currentRoom.pendingDraw.from === 1 ? 2 : 1)) return;
       if (msg.approve) {
         currentRoom.gameOver = true; stopTimer(currentRoom);
@@ -1147,6 +1182,7 @@ wss.on('connection', (ws) => {
     if (msg.type === 'restart') {
       const currentRoom = findRoomByWs(ws);
       if (!currentRoom || !currentRoom.gameOver) return;
+      if (getPlayerColor(currentRoom, ws) !== 1 && getPlayerColor(currentRoom, ws) !== 2) return; // 观战者不可重开
       let newBoard;
       if (currentRoom.gameType === 'chess') newBoard = createChessBoard();
       else if (currentRoom.gameType === 'intl_chess') newBoard = createIntlChessBoard();
@@ -1158,6 +1194,7 @@ wss.on('connection', (ws) => {
       currentRoom.pendingUndo = null; currentRoom.pendingDraw = null;
       currentRoom.gameOver = false; currentRoom.passCount = 0; currentRoom.lastMove = null;
       currentRoom.goCaptures = [0, 0]; currentRoom.intlLastMove = null;
+      currentRoom.keyBeforeLast = null;
       currentRoom.timeLeft = [currentRoom.timerSeconds || 0, currentRoom.timerSeconds || 0];
       currentRoom.choosing = true;
       broadcast(currentRoom, { type: 'restart', board: currentRoom.board });
@@ -1231,6 +1268,7 @@ wss.on('connection', (ws) => {
       rooms.delete(room.id);
     } else {
       const myColor = getPlayerColor(room, ws);
+      const myName = room.names[myColor]; // 删除前先取名，供 recordGame 使用
       room.players = room.players.filter(p => p.ws !== ws);
       if (myColor) {
         delete room.names[myColor];
@@ -1239,8 +1277,8 @@ wss.on('connection', (ws) => {
       if (!room.gameOver && myColor) {
         room.gameOver = true; stopTimer(room);
         const winner = myColor === 1 ? 2 : 1;
-        const wName = room.names[winner], lName = room.names[myColor] || '对手';
-        broadcast(room, { type: 'game_over', winner, reason: '对手离开', winnerName: wName, loserName: lName });
+        const wName = room.names[winner], lName = myName;
+        broadcast(room, { type: 'game_over', winner, reason: '对手离开', winnerName: wName, loserName: lName || '对手' });
         if (wName && lName && wName !== lName) recordGame(wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), room.gameType);
       }
       broadcast(room, { type: 'player_left', color: myColor });
@@ -1262,6 +1300,7 @@ wss.on('connection', (ws) => {
         room.lastMove = null;
         room.intlLastMove = null;
         room.goCaptures = [0, 0];
+        room.keyBeforeLast = null;
         room.timeLeft = [room.timerSeconds, room.timerSeconds];
         const gt = room.gameType;
         if (gt === 'chess') room.board = createChessBoard();

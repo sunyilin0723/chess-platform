@@ -422,42 +422,6 @@ function intlSortMoves(board, moves) {
   }).sort((a, b) => b.score - a.score);
 }
 
-function intlMinimax(board, depth, alpha, beta, isMaximizing, lastMove) {
-  const color = isMaximizing ? 1 : 2;
-
-  if (intlCheckmate(board, color, lastMove)) return isMaximizing ? -99999 + depth : 99999 - depth;
-  if (intlStalemate(board, color, lastMove)) return 0;
-
-  if (depth === 0) return intlEvaluateBoard(board);
-
-  const moves = intlGetAllLegalMoves(board, color, lastMove);
-  const sortedMoves = intlSortMoves(board, moves);
-
-  if (isMaximizing) {
-    let maxEval = -Infinity;
-    for (const { fr, fc, tr, tc, special } of sortedMoves) {
-      const { newLastMove, undo } = makeIntlMove(board, fr, fc, tr, tc, special, lastMove);
-      const eval_ = intlMinimax(board, depth - 1, alpha, beta, false, newLastMove);
-      intlUndoMove(board, undo);
-      maxEval = Math.max(maxEval, eval_);
-      alpha = Math.max(alpha, eval_);
-      if (beta <= alpha) break;
-    }
-    return maxEval;
-  } else {
-    let minEval = Infinity;
-    for (const { fr, fc, tr, tc, special } of sortedMoves) {
-      const { newLastMove, undo } = makeIntlMove(board, fr, fc, tr, tc, special, lastMove);
-      const eval_ = intlMinimax(board, depth - 1, alpha, beta, true, newLastMove);
-      intlUndoMove(board, undo);
-      minEval = Math.min(minEval, eval_);
-      beta = Math.min(beta, eval_);
-      if (beta <= alpha) break;
-    }
-    return minEval;
-  }
-}
-
 // 撤销走棋（使用makeIntlMove返回的undo信息）
 function intlUndoMove(board, undo) {
   const { fr, fc, tr, tc, piece, captured, special, enPassantCaptured, rookFrom, rookTo } = undo;

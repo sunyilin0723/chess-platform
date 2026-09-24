@@ -303,19 +303,19 @@ function updateSpectatorTurnStatus(){
   const gameLabel=gameType==='chess'?(turn===1?'红方':'黑方'):(gameType==='intl_chess'?(turn===1?'白方':'黑方'):(turn===1?'黑棋':'白棋'));
   setStatus(`👁 观战中 · ${colorDot(turn)} ${turnName}（${gameLabel}）的回合`);
 }
-function sendRestart(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'restart'}))}
+function sendRestart(){if(isSpectator)return;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'restart'}))}
 function backToLobby(){
   backToLobbyCalled=true;
   if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
   if(ws)ws.close();
   showView('lobby');
 }
-function sendResign(){if(!gameOver&&confirm('确定要认输吗？')&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'resign'}))}
-function sendPass(){if(!gameOver&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'pass'}))}
-function sendUndo(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'undo_request'}))}
-function sendDraw(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'draw_request'}))}
-function respondUndo(ok){document.getElementById('undo-dialog').classList.remove('show');if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'undo_response',approve:ok}))}
-function respondDraw(ok){document.getElementById('draw-dialog').classList.remove('show');if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'draw_response',approve:ok}))}
+function sendResign(){if(isSpectator)return;if(!gameOver&&confirm('确定要认输吗？')&&ws&&ws.readyState===1)ws.send(JSON.stringify({type:'resign'}))}
+function sendPass(){if(isSpectator||gameOver||!ws||ws.readyState!==1)return;ws.send(JSON.stringify({type:'pass'}))}
+function sendUndo(){if(isSpectator||gameOver)return;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'undo_request'}))}
+function sendDraw(){if(isSpectator||gameOver)return;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'draw_request'}))}
+function respondUndo(ok){document.getElementById('undo-dialog').classList.remove('show');if(isSpectator)return;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'undo_response',approve:ok}))}
+function respondDraw(ok){document.getElementById('draw-dialog').classList.remove('show');if(isSpectator)return;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'draw_response',approve:ok}))}
 function sendChatMsg(){const t=document.getElementById('chat-input').value.trim();if(!t||!ws||ws.readyState!==1)return;ws.send(JSON.stringify({type:'chat',text:t}));document.getElementById('chat-input').value=''}
 document.getElementById('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter')sendChatMsg()});
 document.getElementById('room-input').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom()});

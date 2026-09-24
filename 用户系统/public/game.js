@@ -40,7 +40,17 @@ function showView(name){
   if(name==='lobby'){
     backToLobbyCalled=true;
     if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
+    reconnectAttempts=0;
     if(ws){ ws.close(); ws=null; }
+    // 关闭残留的全屏弹窗
+    ['choose-first','undo-dialog','draw-dialog','report-dialog'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el) el.classList.remove('show');
+    });
+    ['join-choice-dialog','feedback-dialog','welcome-dialog'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el) el.style.display='none';
+    });
     const chatMsgs=document.getElementById('chat-msgs');
     if(chatMsgs) chatMsgs.innerHTML='';
     const chatInput=document.getElementById('chat-input');
@@ -49,6 +59,7 @@ function showView(name){
     playerNames={}; moveCount=0;
     window._chessSelected=null; window._intlChessSelected=null;
     isAI=false; aiColor=0; isSpectator=false;
+    joinDialogOpen=false;
   }
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.getElementById(name+'-view').classList.add('active');
@@ -102,6 +113,10 @@ async function doRegister(){
 }
 function closeWelcomeDialog(){document.getElementById('welcome-dialog').style.display='none'}
 async function logout(){
+  // 停止重连，防止用空 token 重连
+  backToLobbyCalled=true;
+  if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
+  reconnectAttempts=0;
   try{await apiFetch('/api/logout',{method:'POST'})}catch{}
   if(ws){ ws.close(); ws=null; }
   token='';currentUser='';
