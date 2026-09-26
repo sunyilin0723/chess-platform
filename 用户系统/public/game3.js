@@ -406,6 +406,8 @@ function loadProfile(username){
     const isMe=username===currentUser;
     el.innerHTML=`<div class="profile-header"><div class="avatar">${escapeHtml(u.username[0].toUpperCase())}</div><div><div class="profile-name">${escapeHtml(u.username)}</div><div class="profile-date">注册于 ${new Date(u.createdAt).toLocaleDateString('zh-CN')}</div></div></div>
     <div class="stat-grid"><div class="stat-box stat-wins"><div class="stat-val">${u.wins}</div><div class="stat-label">胜</div></div><div class="stat-box stat-losses"><div class="stat-val">${u.losses}</div><div class="stat-label">负</div></div><div class="stat-box"><div class="stat-val">${u.games}</div><div class="stat-label">总场</div></div><div class="stat-box stat-rate"><div class="stat-val">${u.winRate}%</div><div class="stat-label">胜率</div></div></div>
+    <div class="profile-label" style="margin-top:4px;">棋类积分</div>
+    <div class="stat-grid rating-grid"><div class="stat-box"><div class="stat-val" style="font-size:18px;">${u.ratings?.gomoku ?? 1200}</div><div class="stat-label">五子棋</div></div><div class="stat-box"><div class="stat-val" style="font-size:18px;">${u.ratings?.go ?? 1200}</div><div class="stat-label">围棋</div></div><div class="stat-box"><div class="stat-val" style="font-size:18px;">${u.ratings?.chess ?? 1200}</div><div class="stat-label">中国象棋</div></div><div class="stat-box"><div class="stat-val" style="font-size:18px;">${u.ratings?.intl_chess ?? 1200}</div><div class="stat-label">国际象棋</div></div></div>
     ${u.reportCount>0?`<div class="profile-warn">⚠ 该用户被举报 ${u.reportCount} 次</div>`:''}
     ${!isMe?`<button onclick="openDmConversation('${u.username}')" class="profile-btn-dm">📩 发送私信</button>`:''}
     ${isMe?`
@@ -473,10 +475,11 @@ async function loadMyGames(page){
       const time = new Date(g.time).toLocaleString('zh-CN');
       const gameTypeNames = {gomoku:'五子棋',go:'围棋',chess:'中国象棋',intl_chess:'国际象棋'};
       const gameName = gameTypeNames[g.gameType] || g.gameType;
-      const isWin = g.winner === currentUser;
-      const opponent = isWin ? g.loser : g.winner;
-      const result = isWin ? '胜' : (g.winner === '平局' ? '平' : '负');
-      const resultColor = isWin ? 'var(--accent-green)' : (g.winner === '平局' ? 'var(--accent-yellow)' : 'var(--accent-red)');
+      const isDraw = g.draw === true;
+      const isWin = !isDraw && g.winner === currentUser;
+      const opponent = g.winner === currentUser ? g.loser : g.winner;
+      const result = isDraw ? '和' : (isWin ? '胜' : (g.winner === '平局' ? '平' : '负'));
+      const resultColor = isDraw ? 'var(--accent-yellow)' : (isWin ? 'var(--accent-green)' : (g.winner === '平局' ? 'var(--accent-yellow)' : 'var(--accent-red)'));
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg-input);border-radius:8px;margin-bottom:6px;cursor:pointer;" onclick="showGameDetail(${idx})">
         <div>
           <span style="font-weight:bold;color:${resultColor};">${result}</span>
@@ -716,12 +719,81 @@ async function loadAppealHistory(){
     <span style="float:right;color:#666">${new Date(a.time).toLocaleDateString('zh-CN')}</span>
   </div>`).join('')}catch{}}
 if(document.getElementById('appeal-history'))loadAppealHistory();
+const LB_GAME_NAMES={gomoku:'五子棋',go:'围棋',chess:'中国象棋',intl_chess:'国际象棋'};
+const LB_GAMES=['gomoku','go','chess','intl_chess'];
+let lbCurrentGame='gomoku';
+function toggleLbSelect(){
+  const el=document.getElementById('lb-game-select');
+  if(el)el.classList.toggle('open');
+}
+function moveLbIndicator(index){
+  if(index<0)index=0;
+  const indicator=document.getElementById('lb-slider-indicator');
+  if(!indicator)return;
+  const width=100/LB_GAMES.length;
+  indicator.style.left=`calc(${index*width}% + 4px)`;
+  indicator.style.width=`calc(${width}% - 6px)`;
+}
+function selectLbGame(game){
+  if(!LB_GAMES.includes(game))return;
+  lbCurrentGame=game;
+  const idx=LB_GAMES.indexOf(game);
+  const el=document.getElementById('lb-game-select');
+  if(el)el.classList.remove('open');
+  const items=document.querySelectorAll('#lb-slider .lb-slider-item');
+  items.forEach((b,i)=>b.classList.toggle('selected',i===idx));
+  moveLbIndicator(idx);
+  const nameEl=document.getElementById('lb-current-name');
+  if(nameEl)nameEl.textContent=LB_GAME_NAMES[game]||game;
+  loadLeaderboard();
+}
+// 滑块拖拽（与大厅棋类滑块一致）
+function initLbSlider(){
+  const slider=document.getElementById('lb-slider');
+  if(!slider)return;
+  const items=slider.querySelectorAll('.lb-slider-item');
+  const indicator=document.getElementById('lb-slider-indicator');
+  moveLbIndicator(0);
+  let dragging=false,startX=0,startIndex=0,moved=false;
+  slider.addEventListener('pointerdown',e=>{
+    dragging=true;moved=false;startX=e.clientX;
+    startIndex=LB_GAMES.indexOf(lbCurrentGame);
+    try{slider.setPointerCapture(e.pointerId)}catch(_){}
+    indicator.style.transition='none';
+    items.forEach(b=>b.classList.add('dragging'));
+  });
+  slider.addEventListener('pointermove',e=>{
+    if(!dragging)return;
+    const dx=e.clientX-startX;
+    if(Math.abs(dx)>4)moved=true;
+    const w=slider.offsetWidth,itemW=w/LB_GAMES.length;
+    const offset=Math.max(0,Math.min(w-itemW,startIndex*itemW+dx));
+    indicator.style.left=(offset+4)+'px';
+  });
+  slider.addEventListener('pointerup',e=>{
+    if(!dragging)return;
+    dragging=false;
+    indicator.style.transition='left .3s cubic-bezier(.4,0,.2,1),background .3s';
+    items.forEach(b=>b.classList.remove('dragging'));
+    const w=slider.offsetWidth,itemW=w/LB_GAMES.length;
+    let targetIndex;
+    if(moved){
+      targetIndex=Math.round((startIndex*itemW+(e.clientX-startX))/itemW);
+    }else{
+      const rect=slider.getBoundingClientRect();
+      targetIndex=Math.floor((e.clientX-rect.left)/(rect.width/LB_GAMES.length));
+    }
+    targetIndex=Math.max(0,Math.min(LB_GAMES.length-1,targetIndex));
+    selectLbGame(LB_GAMES[targetIndex]);
+  });
+}
+initLbSlider();
 function loadLeaderboard(){
   const el=document.getElementById('lb-content');
-  apiFetch('/api/leaderboard').then(list=>{
+  apiFetch('/api/leaderboard?game='+lbCurrentGame).then(list=>{
     if(!list.length){el.innerHTML='<div class="lb-empty">暂无数据</div>';return}
-    let html='<table><thead><tr><th>排名</th><th>用户名</th><th>胜</th><th>负</th><th>总场</th><th>胜率</th></tr></thead><tbody>';
-    list.forEach((u,i)=>{const rank=i<3?['🥇','🥈','🥉'][i]:(i+1);html+=`<tr><td class="lb-rank">${rank}</td><td>${escapeHtml(u.username)}</td><td class="lb-wins">${u.wins}</td><td>${u.losses}</td><td>${u.games}</td><td class="lb-rate">${u.winRate}%</td></tr>`});
+    let html='<table><thead><tr><th>排名</th><th>用户名</th><th>总场</th><th>积分</th></tr></thead><tbody>';
+    list.forEach((u,i)=>{const rank=i<3?['🥇','🥈','🥉'][i]:(i+1);html+=`<tr><td class="lb-rank">${rank}</td><td>${escapeHtml(u.username)}</td><td>${u.games}</td><td class="lb-rate">${u.rating}</td></tr>`});
     html+='</tbody></table>';el.innerHTML=html;
   }).catch(()=>{el.innerHTML='<div class="lb-empty">加载失败</div>'});
 }

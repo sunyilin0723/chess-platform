@@ -207,17 +207,56 @@ function joinAsPlayer(ws, room, name, token) {
   }
 }
 
+// ==================== Elo 天梯 ====================
+const AI_RATINGS = { '简单': 800, '普通': 1200, '困难': 1600 };
+function aiRatingOf(name) {
+  const m = /^AI \((简单|普通|困难)\)$/.exec(name || '');
+  return m ? AI_RATINGS[m[1]] : null;
+}
+function eloDelta(ra, rb, score, k = 32) {
+  return Math.round(k * (score - 1 / (1 + Math.pow(10, (rb - ra) / 400))));
+}
+function getRating(doc, gameType) {
+  return (doc && doc.ratings && typeof doc.ratings[gameType] === 'number') ? doc.ratings[gameType] : 1200;
+}
+
 async function recordGame(winnerName, loserName, totalMoves, moves, gameType) {
   try {
     console.log('[recordGame] 开始保存:', winnerName, '胜', loserName, '负', gameType, totalMoves, '手');
-    const winnerExists = await User.findOne({ username: winnerName });
-    const loserExists = await User.findOne({ username: loserName });
-    if (winnerExists) await User.updateOne({ username: winnerName }, { $inc: { wins: 1, games: 1 } });
-    if (loserExists) await User.updateOne({ username: loserName }, { $inc: { losses: 1, games: 1 } });
-    const saved = await GameLog.create({ winner: winnerName, loser: loserName, totalMoves, gameType: gameType || 'gomoku', moves: moves || [], time: new Date().toISOString() });
-    console.log('[recordGame] 保存成功 ID:', saved._id);
+    const gt = gameType || 'gomoku';
+    const winnerDoc = await User.findOne({ username: winnerName });
+    const loserDoc = await User.findOne({ username: loserName });
+    // Elo 结算：AI 用固定虚拟分，不落库
+    const wR = winnerDoc ? getRating(winnerDoc, gt) : (aiRatingOf(winnerName) ?? 1200);
+    const lR = loserDoc ? getRating(loserDoc, gt) : (aiRatingOf(loserName) ?? 1200);
+    const wDelta = eloDelta(wR, lR, 1);
+    const lDelta = eloDelta(lR, wR, 0);
+    if (winnerDoc) await User.updateOne({ username: winnerName }, { $inc: { wins: 1, games: 1 }, $set: { [`ratings.${gt}`]: wR + wDelta } });
+    if (loserDoc) await User.updateOne({ username: loserName }, { $inc: { losses: 1, games: 1 }, $set: { [`ratings.${gt}`]: lR + lDelta } });
+    const saved = await GameLog.create({ winner: winnerName, loser: loserName, totalMoves, gameType: gt, draw: false, moves: moves || [], time: new Date().toISOString() });
+    console.log('[recordGame] 保存成功 ID:', saved._id, 'Elo:', wDelta >= 0 ? `+${wDelta}` : wDelta, '/', lDelta >= 0 ? `+${lDelta}` : lDelta);
   } catch (e) {
     console.error('[recordGame] 保存失败:', e.message, e.stack);
+  }
+}
+
+// 平局记录（双方 Elo 按 S=0.5 结算）
+async function recordDraw(nameA, nameB, totalMoves, moves, gameType) {
+  try {
+    if (!nameA || !nameB || nameA === nameB) return;
+    const gt = gameType || 'gomoku';
+    const docA = await User.findOne({ username: nameA });
+    const docB = await User.findOne({ username: nameB });
+    const rA = docA ? getRating(docA, gt) : (aiRatingOf(nameA) ?? 1200);
+    const rB = docB ? getRating(docB, gt) : (aiRatingOf(nameB) ?? 1200);
+    const dA = eloDelta(rA, rB, 0.5);
+    const dB = eloDelta(rB, rA, 0.5);
+    if (docA) await User.updateOne({ username: nameA }, { $inc: { draws: 1, games: 1 }, $set: { [`ratings.${gt}`]: rA + dA } });
+    if (docB) await User.updateOne({ username: nameB }, { $inc: { draws: 1, games: 1 }, $set: { [`ratings.${gt}`]: rB + dB } });
+    await GameLog.create({ winner: nameA, loser: nameB, totalMoves, gameType: gt, draw: true, moves: moves || [], time: new Date().toISOString() });
+    console.log('[recordDraw] 平局保存:', nameA, 'vs', nameB, gt, 'Elo:', dA, '/', dB);
+  } catch (e) {
+    console.error('[recordDraw] 保存失败:', e.message);
   }
 }
 
@@ -247,6 +286,7 @@ app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.json({ error: '请输入用户名和密码' });
     if (username.length < 2 || username.length > 10) return res.json({ error: '用户名2-10个字符' });
+    if (/^AI \((简单|普通|困难)\)$/.test(username)) return res.json({ error: '不可使用系统AI名称' });
     if (password.length < 4) return res.json({ error: '密码至少4位' });
     const exists = await User.findOne({ username });
     if (exists) return res.json({ error: '用户名已存在' });
@@ -301,12 +341,13 @@ async function authMiddleware(req, res, next) {
 
 // ==================== 排行榜 ====================
 app.get('/api/leaderboard', async (req, res) => {
-  const users = await User.find({ deletedAt: null }).select('username wins losses games').lean();
+  const game = ['gomoku', 'go', 'chess', 'intl_chess'].includes(req.query.game) ? req.query.game : 'gomoku';
+  const users = await User.find({ deletedAt: null }).select('username wins losses games draws ratings').lean();
   const list = users.map(u => ({
-    username: u.username, wins: u.wins, losses: u.losses, games: u.games,
-    winRate: u.games > 0 ? Math.round(u.wins / u.games * 100) : 0,
+    username: u.username, games: u.games,
+    rating: getRating(u, game),
   }));
-  list.sort((a, b) => b.winRate - a.winRate || b.wins - a.wins);
+  list.sort((a, b) => b.rating - a.rating || b.games - a.games);
   res.json(list.slice(0, 20));
 });
 
@@ -318,6 +359,14 @@ app.get('/api/profile/:username', async (req, res) => {
   info.username = req.params.username;
   info.winRate = u.games > 0 ? Math.round(u.wins / u.games * 100) : 0;
   info.deleted = !!u.deletedAt;
+  // Elo：逐棋类兜底（lean 查询不套用 schema 默认值）
+  info.ratings = {
+    gomoku: getRating(u, 'gomoku'),
+    go: getRating(u, 'go'),
+    chess: getRating(u, 'chess'),
+    intl_chess: getRating(u, 'intl_chess'),
+  };
+  info.draws = u.draws || 0;
   info.reportCount = await Report.countDocuments({ target: req.params.username, status: 'approved' });
   info.reports = await Report.find({ target: req.params.username }).sort({ time: -1 }).lean();
   res.json(info);
@@ -871,6 +920,7 @@ wss.on('connection', (ws) => {
                 const lName = winner === 0 ? '' : currentRoom.names[winner === 1 ? 2 : 1] || '';
                 broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName, black, white });
                 if (winner !== 0 && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
+                else if (winner === 0) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
                 cleanupRoom(currentRoom);
               }
             }
@@ -952,9 +1002,11 @@ wss.on('connection', (ws) => {
           const reason = checkmate ? '将杀' : '逼和（平局）';
           const winner = checkmate ? myColor : 0;
           broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName });
-          // 仅将杀时记录对局，逼和为平局不记录
+          // 将杀记录胜负；逼和为平局记录和棋
           if (checkmate && wName && lName && wName !== lName) {
             recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
+          } else if (!checkmate) {
+            recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
           }
           cleanupRoom(currentRoom);
         } else {
@@ -983,6 +1035,7 @@ wss.on('connection', (ws) => {
                   const winner = aiCheckmate ? currentRoom.aiColor : 0;
                   broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName });
                   if (aiCheckmate && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
+                  else if (!aiCheckmate) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
                   cleanupRoom(currentRoom);
                 } else if (aiCheck) {
                   broadcast(currentRoom, { type: 'chat', color: 0, text: '将军！' });
@@ -1015,6 +1068,7 @@ wss.on('connection', (ws) => {
         const lName = winner === 0 ? '' : currentRoom.names[winner === 1 ? 2 : 1] || '';
         broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName, black, white });
         if (winner !== 0 && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
+        else if (winner === 0) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
         cleanupRoom(currentRoom);
       } else if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
         setTimeout(() => {
@@ -1057,6 +1111,7 @@ wss.on('connection', (ws) => {
               const lName = winner === 0 ? '' : currentRoom.names[winner === 1 ? 2 : 1] || '';
               broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName, black, white });
               if (winner !== 0 && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
+              else if (winner === 0) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
               cleanupRoom(currentRoom);
             }
           }
@@ -1170,6 +1225,7 @@ wss.on('connection', (ws) => {
       if (msg.approve) {
         currentRoom.gameOver = true; stopTimer(currentRoom);
         broadcast(currentRoom, { type: 'game_over', winner: 0, reason: '双方同意和棋', winnerName: '平局', loserName: '' });
+        recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), currentRoom.gameType);
         cleanupRoom(currentRoom);
       } else {
         currentRoom.drawCount[currentRoom.pendingDraw.from - 1]++;

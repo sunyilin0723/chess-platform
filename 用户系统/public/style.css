@@ -142,6 +142,18 @@ canvas{display:block;border-radius:8px;box-shadow:0 0 20px var(--board-shadow);t
 .stat-val{font-size:22px;font-weight:bold}.stat-label{font-size:12px;color:var(--text-muted);margin-top:4px}
 .stat-wins .stat-val{color:var(--accent-green)}.stat-losses .stat-val{color:var(--accent-red)}.stat-rate .stat-val{color:var(--accent-yellow)}
 .lb-card{width:500px}
+/* 排行榜棋类滑块（与大厅棋类滑块一致） */
+.lb-select{position:relative;margin-bottom:14px}
+.lb-select-current{display:none;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg-input);border:1px solid var(--border-color);border-radius:8px;color:var(--text-primary);font-size:14px;cursor:pointer;user-select:none}
+.lb-select-arrow{font-size:11px;color:var(--text-muted);transition:transform .3s}
+.lb-select.open .lb-select-arrow{transform:rotate(180deg)}
+.lb-select-list{display:block}
+.lb-slider{position:relative;display:flex;background:var(--bg-input);border:1px solid var(--border-color);border-radius:10px;overflow:hidden;user-select:none;-webkit-user-select:none}
+.card button.lb-slider-item,.lb-slider-item{flex:1;width:auto;margin:0;padding:10px 4px;border:none;background:transparent;color:var(--text-primary);cursor:pointer;font-size:13px;position:relative;z-index:2;transition:color .3s,transform .15s;white-space:nowrap;border-radius:0}
+.card button.lb-slider-item:hover,.lb-slider-item:hover{background:transparent}
+.lb-slider-item.selected{color:var(--accent-blue)!important;font-weight:bold}
+.lb-slider-item:active{transform:scale(0.96)}
+.lb-slider-item.dragging{color:var(--accent-blue)}
 .lb-card table{width:100%;border-collapse:collapse}
 .lb-card th,.lb-card td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border-color);font-size:14px}
 .lb-card th{color:var(--text-muted);font-weight:normal;font-size:12px}
@@ -441,6 +453,33 @@ canvas{display:block;border-radius:8px;box-shadow:0 0 20px var(--board-shadow);t
   .lb-card th, .lb-card td {
     padding: 8px 6px;
     font-size: 12px;
+  }
+  .lb-select {
+    margin-bottom: 12px;
+  }
+  .lb-select-current {
+    display: flex;
+  }
+  .lb-select-list {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 8px;
+    margin-top: 6px;
+    z-index: 50;
+    box-shadow: 0 4px 20px var(--shadow);
+  }
+  .lb-select.open .lb-select-list {
+    display: block;
+  }
+  .lb-slider-item {
+    padding: 12px 4px;
+    font-size: 14px;
   }
 
   /* 个人主页 */

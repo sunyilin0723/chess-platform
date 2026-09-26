@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>在线棋类对战</title>
-<link rel="stylesheet" href="style.css?v=10">
+<link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
 <div id="navbar">
@@ -141,7 +141,21 @@
 </div>
 
 <div id="profile-view" class="view"><div class="center-page"><div class="card profile-card" id="profile-content"></div></div></div>
-<div id="leaderboard-view" class="view"><div class="center-page"><div class="card lb-card"><h2>排行榜</h2><div id="lb-content"></div></div></div></div>
+<div id="leaderboard-view" class="view"><div class="center-page"><div class="card lb-card"><h2>排行榜</h2>
+  <div id="lb-game-select" class="lb-select">
+    <div class="lb-select-current" onclick="toggleLbSelect()"><span id="lb-current-name">五子棋</span><span class="lb-select-arrow">▼</span></div>
+    <div class="lb-select-list">
+      <div class="lb-slider" id="lb-slider">
+        <div class="game-slider-indicator" id="lb-slider-indicator"></div>
+        <button class="lb-slider-item selected" data-game="gomoku">五子棋</button>
+        <button class="lb-slider-item" data-game="go">围棋</button>
+        <button class="lb-slider-item" data-game="chess">中国象棋</button>
+        <button class="lb-slider-item" data-game="intl_chess">国际象棋</button>
+      </div>
+    </div>
+  </div>
+  <div id="lb-content"></div>
+</div></div></div>
 
 <div id="choose-first">
   <div id="choose-box">
@@ -270,6 +284,6 @@
 
 <script src="game.js?v=9"></script>
 <script src="game2.js?v=14"></script>
-<script src="game3.js?v=10"></script>
+<script src="game3.js?v=12"></script>
 </body>
 </html>

@@ -7,6 +7,16 @@ const userSchema = new mongoose.Schema({
   wins: { type: Number, default: 0 },
   losses: { type: Number, default: 0 },
   games: { type: Number, default: 0 },
+  draws: { type: Number, default: 0 },
+  ratings: {
+    type: {
+      gomoku: { type: Number, default: 1200 },
+      go: { type: Number, default: 1200 },
+      chess: { type: Number, default: 1200 },
+      intl_chess: { type: Number, default: 1200 },
+    },
+    default: () => ({ gomoku: 1200, go: 1200, chess: 1200, intl_chess: 1200 }),
+  },
   deletedAt: { type: String, default: null },
   createdAt: { type: String, default: () => new Date().toISOString() },
 }, { collection: 'users' });
@@ -41,6 +51,7 @@ const gameLogSchema = new mongoose.Schema({
   loser: { type: String, required: true },
   totalMoves: { type: Number, default: 0 },
   gameType: { type: String, default: 'gomoku' },
+  draw: { type: Boolean, default: false },
   moves: { type: [mongoose.Schema.Types.Mixed], default: [] },
   time: { type: String, default: () => new Date().toISOString() },
 }, { collection: 'gameRecord' });

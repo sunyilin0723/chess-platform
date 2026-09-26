@@ -28,10 +28,16 @@
 
 ### 用户系统
 - 注册/登录（Argon2密码加密）
+- **Elo 天梯积分**
+  - 四种棋类分开计分（五子棋/围棋/中国象棋/国际象棋各自独立）
+  - 初始 1200 分，K=32；平局双方按 S=0.5 结算
+  - 人机对战也计分：AI 按难度有固定虚拟分（简单 800 / 普通 1200 / 困难 1600）——打简单赢少输多，打困难赢多输少
+  - 排行榜按所选棋类积分排序（顶部棋类切换：电脑横排按钮、手机折叠展开列表）
 - 个人主页：折叠面板设计
   - 🔒 账户安全：修改用户名、修改密码、注销账号
   - 🎮 最近对局记录：查看历史对局，点击可棋盘回放
-- 排行榜
+  - 棋类积分：四种棋类各自分数一屏展示
+- 排行榜（排名/用户名/总场/积分）
 - 账号软删除（7天保留期）
 
 ### 社交功能
@@ -309,13 +315,13 @@ node server.js
 
 | 集合 | 用途 | 保留策略 |
 |------|------|---------|
-| users | 用户账号 | 软删除保留7天 |
+| users | 用户账号（含 ratings 分棋类积分、draws） | 软删除保留7天 |
 | admins | 管理员账号 | 永久 |
 | tokens | 登录凭证 | 登出即删 |
 | banList | 封号记录 | 永久/临时 |
 | reports | 举报记录 | 永久 |
 | appeals | 申诉记录 | 永久 |
-| gameRecord | 对局记录（含每步棋） | 永久 |
+| gameRecord | 对局记录（含每步棋、draw平局标记） | 永久 |
 | notifications | 站内通知 | 永久 |
 | chatLogs | 聊天记录 | 15天自动清理 |
 | dms | 私信记录 | 永久 |
@@ -333,8 +339,8 @@ node server.js
 | POST | /api/login | 登录 |
 | POST | /api/logout | 登出 |
 | GET | /api/me | 当前用户信息 |
-| GET | /api/profile/:username | 用户资料 |
-| GET | /api/leaderboard | 排行榜 |
+| GET | /api/profile/:username | 用户资料（含分棋类积分） |
+| GET | /api/leaderboard?game=xxx | 排行榜（按棋类积分排序，game 默认 gomoku） |
 | GET | /api/my-games | 我的对局记录（需登录） |
 | POST | /api/change-username | 修改用户名 |
 | POST | /api/change-password | 修改密码 |
