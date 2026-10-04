@@ -166,6 +166,7 @@ async function doRegister(){
   if(!username||!password)return authError('请输入用户名和密码');
   if(password!==password2)return authError('两次密码不一致');
   const turnstileToken=getTurnstileToken('register');
+  if(window.turnstile&&_turnstileWidgets['register']!==undefined&&!turnstileToken)return authError('请先完成人机验证');
   try{const d=await apiFetch('/api/register',{method:'POST',body:JSON.stringify({username,password,turnstileToken})});
   if(d.error){resetTurnstile('register');return authError(d.error);}
   token=d.token;currentUser=d.username;localStorage.setItem('gomoku_token',token);localStorage.setItem('gomoku_user',currentUser);

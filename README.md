@@ -152,6 +152,7 @@ node server.js
 
 ### 4. 访问网站
 
+- **配置指南**：双击项目根目录的 `Welcome.html` 查看（环境要求 / .env 字段说明 / 启动命令 / 常见问题）
 - 游戏平台：http://localhost:3002
 - 管理后台：http://localhost:3003
 

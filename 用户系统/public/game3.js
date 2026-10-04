@@ -355,6 +355,9 @@ window.submitFeedback=function(){
   const msgEl=document.getElementById('feedback-msg');
   if(!content){msgEl.textContent='请输入反馈内容';msgEl.style.color='#e74c3c';return}
   const turnstileToken=getTurnstileToken('feedback');
+  if(window.turnstile&&_turnstileWidgets['feedback']!==undefined&&!turnstileToken){
+    msgEl.textContent='请先完成人机验证';msgEl.style.color='#e74c3c';return;
+  }
   apiFetch('/api/feedback',{method:'POST',body:JSON.stringify({content,turnstileToken})}).then(()=>{
     msgEl.textContent='反馈已提交，管理员回复后会通过站内通知告知';
     msgEl.style.color='#2ecc71';
@@ -405,6 +408,10 @@ async function submitReport(){
   if(!reportScreenshot){alert('请上传截图');return}
   const detail=document.getElementById('report-detail').value.trim();
   const turnstileToken=getTurnstileToken('report');
+  if(window.turnstile&&_turnstileWidgets['report']!==undefined&&!turnstileToken){
+    alert('请先完成人机验证');
+    return;
+  }
   console.log('[turnstile] 举报token长度:', turnstileToken.length, 'widget:', _turnstileWidgets['report']);
   try{
     await apiFetch('/api/report',{method:'POST',body:JSON.stringify({target,reason:detail||rt.dataset.type,reasonType:rt.dataset.type,screenshot:reportScreenshot,turnstileToken})});
@@ -421,7 +428,10 @@ function loadProfile(username){
     el.innerHTML=`<div class="profile-header"><div class="avatar">${escapeHtml(u.username[0].toUpperCase())}</div><div><div class="profile-name">${escapeHtml(u.username)}</div><div class="profile-date">注册于 ${new Date(u.createdAt).toLocaleDateString('zh-CN')}</div></div></div>
     <div class="stat-grid"><div class="stat-box stat-wins"><div class="stat-val">${u.wins}</div><div class="stat-label">胜</div></div><div class="stat-box stat-losses"><div class="stat-val">${u.losses}</div><div class="stat-label">负</div></div><div class="stat-box"><div class="stat-val">${u.games}</div><div class="stat-label">总场</div></div><div class="stat-box stat-rate"><div class="stat-val">${u.winRate}%</div><div class="stat-label">胜率</div></div></div>
     <div class="profile-label" style="margin-top:4px;">棋类积分</div>
-    <div class="stat-grid rating-grid"><div class="stat-box"><div class="stat-val" style="font-size:18px;">${u.ratings?.gomoku ?? 1200}</div><div class="stat-label">五子棋</div></div><div class="stat-box"><div class="stat-val" style="font-size:18px;">${u.ratings?.go ?? 1200}</div><div class="stat-label">围棋</div></div><div class="stat-box"><div class="stat-val" style="font-size:18px;">${u.ratings?.chess ?? 1200}</div><div class="stat-label">中国象棋</div></div><div class="stat-box"><div class="stat-val" style="font-size:18px;">${u.ratings?.intl_chess ?? 1200}</div><div class="stat-label">国际象棋</div></div></div>
+    <div class="stat-grid rating-grid">${[['gomoku','五子棋'],['go','围棋'],['chess','中国象棋'],['intl_chess','国际象棋']].map(([k,label])=>{
+      const r=u.ratings?.[k] ?? 1200; const ri=getRankInfo(r);
+      return `<div class="stat-box"><div class="stat-val" style="font-size:18px;">${r}</div><div style="font-size:11px;color:${ri.color};margin-top:2px;">${ri.icon} ${ri.name}</div><div class="stat-label">${label}</div></div>`;
+    }).join('')}</div>
     ${u.reportCount>0?`<div class="profile-warn">⚠ 该用户被举报 ${u.reportCount} 次</div>`:''}
     ${!isMe?`<button onclick="openDmConversation('${u.username}')" class="profile-btn-dm">📩 发送私信</button>`:''}
     ${isMe?`
@@ -802,12 +812,36 @@ function initLbSlider(){
   });
 }
 initLbSlider();
+
+// ==================== 天梯段位体系 ====================
+const RANK_TIERS = [
+  { min: 2000, name: '国手', color: '#ff6b6b', icon: '👑' },
+  { min: 1800, name: '大师', color: '#f0c040', icon: '🏆' },
+  { min: 1600, name: '名手', color: '#b06ef7', icon: '💎' },
+  { min: 1400, name: '高手', color: '#5c9ded', icon: '⭐' },
+  { min: 1200, name: '棋手', color: '#2ecc71', icon: '♟' },
+  { min: 1000, name: '棋士', color: '#95a5a6', icon: '🔰' },
+  { min: 0,    name: '新手', color: '#7f8c8d', icon: '🌱' },
+];
+function getRankInfo(rating){
+  rating = Number(rating) || 0;
+  for(const t of RANK_TIERS){ if(rating >= t.min) return t; }
+  return RANK_TIERS[RANK_TIERS.length - 1];
+}
+function rankBadge(rating){
+  const ri = getRankInfo(rating);
+  return `<span style="color:${ri.color};font-weight:bold;white-space:nowrap;">${ri.icon} ${ri.name}</span>`;
+}
+
 function loadLeaderboard(){
   const el=document.getElementById('lb-content');
   apiFetch('/api/leaderboard?game='+lbCurrentGame).then(list=>{
     if(!list.length){el.innerHTML='<div class="lb-empty">暂无数据</div>';return}
-    let html='<table><thead><tr><th>排名</th><th>用户名</th><th>总场</th><th>积分</th></tr></thead><tbody>';
-    list.forEach((u,i)=>{const rank=i<3?['🥇','🥈','🥉'][i]:(i+1);html+=`<tr><td class="lb-rank">${rank}</td><td>${escapeHtml(u.username)}</td><td>${u.games}</td><td class="lb-rate">${u.rating}</td></tr>`});
+    let html='<table><thead><tr><th>排名</th><th>用户名</th><th>段位</th><th>总场</th><th>积分</th></tr></thead><tbody>';
+    list.forEach((u,i)=>{
+      const rank=i<3?['🥇','🥈','🥉'][i]:(i+1);
+      html+=`<tr><td class="lb-rank">${rank}</td><td>${escapeHtml(u.username)}</td><td>${rankBadge(u.rating)}</td><td>${u.games}</td><td class="lb-rate">${u.rating}</td></tr>`;
+    });
     html+='</tbody></table>';el.innerHTML=html;
   }).catch(()=>{el.innerHTML='<div class="lb-empty">加载失败</div>'});
 }

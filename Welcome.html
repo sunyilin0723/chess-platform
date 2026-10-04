@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>配置指南 - 在线棋类对战</title>
+<style>
+:root{
+  --bg:#1a1a2e;--bg2:#16213e;--card:#16213e;--input:#0d1b3e;
+  --text:#eee;--text2:#aaa;--muted:#888;--border:#333;
+  --blue:#5c9ded;--green:#2ecc71;--red:#e74c3c;--yellow:#f0c040;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);line-height:1.7;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+a{color:var(--blue);text-decoration:none}
+.container{max-width:920px;margin:0 auto;padding:0 20px}
+
+.nav{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;border-bottom:1px solid var(--border);background:rgba(22,33,62,.8);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+.nav .logo{font-size:20px;font-weight:bold}
+.nav .logo span{color:var(--blue)}
+.nav-cta{padding:9px 22px;border:none;border-radius:8px;background:var(--blue);color:#fff;font-size:14px;cursor:pointer;transition:.2s}
+.nav-cta:hover{background:#4a8bd4}
+
+.hero{text-align:center;padding:54px 20px 36px;background:radial-gradient(ellipse at center,rgba(92,157,237,.12),transparent 65%)}
+.hero h1{font-size:34px;margin-bottom:10px}
+.hero h1 em{font-style:normal;color:var(--blue)}
+.hero p{color:var(--text2);font-size:15px}
+
+section{padding:34px 0}
+.sec-title{font-size:22px;margin-bottom:6px;display:flex;align-items:center;gap:10px}
+.sec-title .no{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;background:var(--blue);color:#fff;font-size:16px;flex-shrink:0}
+.sec-sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+
+pre{background:#0d1220;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;font-size:14px;margin:12px 0;font-family:Consolas,'Courier New',monospace;color:#9fe8a5;position:relative}
+pre .c{color:var(--muted)}
+pre .cm{color:#6c7a96}
+code{background:var(--input);border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:13px;font-family:Consolas,monospace;color:var(--yellow)}
+
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-weight:normal;font-size:12px}
+td code{white-space:nowrap}
+.ok{color:var(--green)}
+.req{color:var(--red)}
+
+/* 下载链接 */
+.dl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin-top:16px}
+.dl-os{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px}
+.dl-os h4{font-size:15px;margin-bottom:12px}
+.dl-btn{display:block;padding:11px 16px;margin-bottom:10px;border:1px solid var(--border);border-radius:8px;background:var(--input);color:var(--text);font-size:14px;transition:.2s;cursor:pointer}
+.dl-btn:last-child{margin-bottom:0}
+.dl-btn:hover{border-color:var(--blue);color:var(--blue);transform:translateY(-1px)}
+.dl-btn::before{content:'⬇ ';color:var(--green)}
+.dl-cmd{margin-top:4px}
+.dl-cmd-label{font-size:12px;color:var(--muted);margin:8px 0 4px}
+.dl-cmd pre{margin:0;padding:10px 12px;font-size:13px}
+
+.tip{background:rgba(92,157,237,.1);border:1px solid rgba(92,157,237,.35);border-radius:10px;padding:14px 18px;font-size:14px;margin:14px 0}
+.tip b{color:var(--blue)}
+.warn{background:rgba(240,192,64,.08);border:1px solid rgba(240,192,64,.35);border-radius:10px;padding:14px 18px;font-size:14px;margin:14px 0}
+.warn b{color:var(--yellow)}
+
+.faq{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:6px 20px}
+.faq h4{font-size:15px;margin-top:16px;color:var(--blue)}
+.faq p{font-size:14px;color:var(--text2);margin-bottom:6px}
+
+.cta{text-align:center;background:linear-gradient(135deg,#16213e,#1a1a2e);border:1px solid var(--border);border-radius:18px;padding:40px 24px;margin-top:10px}
+.cta h2{font-size:24px;margin-bottom:8px}
+.cta p{color:var(--text2);margin-bottom:22px;font-size:14px}
+.btn-main{padding:13px 38px;border:none;border-radius:10px;background:var(--blue);color:#fff;font-size:16px;cursor:pointer;transition:.2s}
+.btn-main:hover{background:#4a8bd4;transform:translateY(-2px)}
+
+footer{text-align:center;padding:26px 20px;color:var(--muted);font-size:13px;border-top:1px solid var(--border);margin-top:36px}
+
+@media(max-width:768px){
+  .hero h1{font-size:26px}
+  .sec-title{font-size:19px}
+  pre{font-size:12.5px;padding:12px}
+  table{font-size:13px}
+  th,td{padding:8px 6px}
+  section{padding:24px 0}
+  .dl-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="logo">♟ 在线<span>棋类对战</span></div>
+  <button class="nav-cta" onclick="location.href='http://localhost:3002/login'">配置完成，进入站点</button>
+</div>
+
+<div class="hero">
+  <h1>🚀 项目<em>配置指南</em></h1>
+  <p>刚克隆下来？按以下三步完成配置并启动，约需 3 分钟</p>
+</div>
+
+<div class="container">
+
+<!-- 第一步 -->
+<section>
+  <h2 class="sec-title"><span class="no">1</span>环境要求</h2>
+  <p class="sec-sub">确认你的电脑已安装以下软件</p>
+  <table>
+    <tr><th>软件</th><th>最低版本</th><th>说明</th></tr>
+    <tr><td><code>Node.js</code></td><td>18+</td><td>运行游戏服务器与管理后台（内置 fetch 需要 18+）</td></tr>
+    <tr><td><code>MongoDB</code></td><td>4+</td><td>本地或远程数据库，默认连接 <code>mongodb://localhost:27017</code></td></tr>
+    <tr><td><code>npm</code></td><td>随 Node 附带</td><td>安装依赖</td></tr>
+  </table>
+  <div class="dl-grid">
+    <div class="dl-os">
+      <h4>🪟 Windows</h4>
+      <a class="dl-btn" href="https://nodejs.org/dist/v24.21.0/node-v24.21.0-x64.msi" target="_blank" rel="noopener">Node.js v24.21.0（.msi）</a>
+      <a class="dl-btn" href="https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-8.0.32-signed.msi" target="_blank" rel="noopener">MongoDB 8.0.32（.msi）</a>
+    </div>
+    <div class="dl-os">
+      <h4>🍎 macOS（Apple 芯片）</h4>
+      <a class="dl-btn" href="https://nodejs.org/dist/v24.21.0/node-v24.21.0.pkg" target="_blank" rel="noopener">Node.js v24.21.0（.pkg）</a>
+      <div class="dl-cmd">
+        <div class="dl-cmd-label">MongoDB 安装（Homebrew）：</div>
+        <pre>brew tap mongodb/brew
+brew install mongodb-community@8.0</pre>
+        <div class="dl-cmd-label">安装完直接启动：</div>
+        <pre>brew services start mongodb-community@8.0</pre>
+      </div>
+    </div>
+    <div class="dl-os">
+      <h4>🐧 Ubuntu（Linux）</h4>
+      <a class="dl-btn" href="https://repo.mongodb.org/apt/ubuntu/dists/jammy/mongodb-org/8.0/multiverse/binary-amd64/mongodb-org-server_8.0.32_amd64.deb" target="_blank" rel="noopener">MongoDB 8.0.32（.deb）</a>
+      <div class="dl-cmd">
+        <div class="dl-cmd-label">Node.js 安装（命令）：</div>
+        <pre>curl -fsSL https://mirrors.aliyun.com/nodesource/deb_20.x/setup | sudo -E bash -
+sudo apt install -y nodejs</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 第二步 -->
+<section>
+  <h2 class="sec-title"><span class="no">2</span>安装依赖</h2>
+  <p class="sec-sub">在项目根目录（用户版本/）打开终端，分别进入两个子目录安装</p>
+  <pre><span class="cm"># 游戏服务器依赖</span>
+cd 用户系统
+npm install
+
+<span class="cm"># 管理后台依赖</span>
+cd ../管理员系统
+npm install</pre>
+</section>
+
+<!-- 第三步 -->
+<section>
+  <h2 class="sec-title"><span class="no">3</span>配置 .env</h2>
+  <p class="sec-sub">编辑项目根目录（用户版本/.env），各字段说明如下</p>
+  <table>
+    <tr><th>变量</th><th>必填</th><th>说明</th></tr>
+    <tr><td><code>GAME_PORT</code></td><td>建议</td><td>游戏服务器端口，默认 <code>3002</code></td></tr>
+    <tr><td><code>ADMIN_PORT</code></td><td>建议</td><td>管理后台端口，默认 <code>3003</code></td></tr>
+    <tr><td><code>MONGO_URI</code></td><td><span class="req">必填</span></td><td>数据库地址，如 <code>mongodb://localhost:27017/chess-platform</code></td></tr>
+    <tr><td><code>ADMIN_USERNAME</code></td><td><span class="req">必填</span></td><td>主管理员用户名（首次启动管理后台时自动创建）</td></tr>
+    <tr><td><code>ADMIN_PASSWORD</code></td><td><span class="req">必填</span></td><td>主管理员密码</td></tr>
+    <tr><td><code>ADMIN_KEY</code></td><td><span class="req">必填</span></td><td>两个服务器共用的通信密钥，<b>必须一致</b>，否则管理后台看不到实时对局</td></tr>
+    <tr><td><code>TURNSTILE_SITE_KEY</code></td><td>可选</td><td>人机验证 siteKey；<b>留空 = 跳过验证</b>（本地开发建议留空）</td></tr>
+    <tr><td><code>TURNSTILE_SECRET_KEY</code></td><td>可选</td><td>人机验证 secretKey，与上面成对配置</td></tr>
+    <tr><td><code>SITE_URL</code></td><td>可选</td><td>对外域名（如 <code>https://chess.example.com</code>），部署到公网时填</td></tr>
+  </table>
+  <div class="tip">💡 <b>最简配置</b>：本地跑通只需填 <code>MONGO_URI</code>、<code>ADMIN_USERNAME</code>、<code>ADMIN_PASSWORD</code>、<code>ADMIN_KEY</code> 四项，其余留默认/留空即可。</div>
+</section>
+
+<!-- 第四步 -->
+<section>
+  <h2 class="sec-title"><span class="no">4</span>启动服务</h2>
+  <p class="sec-sub">先确认 MongoDB 正在运行，然后开两个终端分别启动</p>
+  <pre><span class="cm"># 终端 1 —— 游戏服务器</span>
+cd 用户系统
+node server.js
+
+<span class="cm"># 终端 2 —— 管理后台</span>
+cd 管理员系统
+node server.js</pre>
+  <table>
+    <tr><th>地址</th><th>用途</th></tr>
+    <tr><td><code>http://localhost:3002</code></td><td>欢迎页 / 用户端（游戏入口）</td></tr>
+    <tr><td><code>http://localhost:3002/home</code></td><td>大厅（需先登录）</td></tr>
+    <tr><td><code>http://localhost:3003</code></td><td>管理后台（用 ADMIN_USERNAME/PASSWORD 登录）</td></tr>
+  </table>
+</section>
+
+<!-- 首次使用 -->
+<section>
+  <h2 class="sec-title">🎉 首次使用</h2>
+  <p class="sec-sub">启动成功后的建议操作顺序</p>
+  <div class="faq">
+    <h4>1. 注册一个普通账号</h4>
+    <p>打开 <code>http://localhost:3002</code> → 立即开始 → 注册（新用户自动获得 1200 天梯初始分）</p>
+    <h4>2. 登录管理后台</h4>
+    <p>打开 <code>http://localhost:3003</code>，用 <code>.env</code> 里的 ADMIN_USERNAME / ADMIN_PASSWORD 登录；可在"管理员"页添加子管理员</p>
+    <h4>3. 开一局试试</h4>
+    <p>大厅选择棋类 → 人机对战（三档难度）或输入房间号人人对战</p>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section>
+  <h2 class="sec-title">❓ 常见问题</h2>
+  <div class="faq">
+    <h4>启动报 MongoDB 连接失败？</h4>
+    <p>先启动 MongoDB（项目根目录有 <code>启动MongoDB.bat</code>），或检查 <code>MONGO_URI</code> 是否正确。</p>
+    <h4>管理后台看不到实时对局？</h4>
+    <p>两端 <code>ADMIN_KEY</code> 必须完全一致，改完需<b>重启两个服务</b>。</p>
+    <h4>改了前端代码没生效？</h4>
+    <p>浏览器强制刷新 <code>Ctrl+F5</code>（HTML 用 <code>?v=N</code> 版本号控缓存，改动大时版本号会递增）。</p>
+    <h4>注册/举报提示"人机验证失败"？</h4>
+    <p>本地开发建议把 <code>TURNSTILE_SITE_KEY</code> / <code>TURNSTILE_SECRET_KEY</code> <b>留空</b>（跳过验证）；正式使用需到 Cloudflare 控制台创建 Turnstile 站点，且 hostname 包含你访问用的域名或 localhost。</p>
+    <h4>端口被占用？</h4>
+    <p>修改 <code>.env</code> 中的 <code>GAME_PORT</code> / <code>ADMIN_PORT</code> 后重启。</p>
+    <h4>公网部署要注意什么？</h4>
+    <p>① 反向代理需转发 WebSocket（Upgrade 头）；② 填写 <code>SITE_URL</code>；③ 配置真实的 Turnstile 密钥；④ 关闭 MongoDB 对公网的访问。</p>
+  </div>
+</section>
+
+<div class="cta">
+  <h2>配置完成了？</h2>
+  <p>进入站点开始对局，或前往管理后台管理用户</p>
+  <button class="btn-main" onclick="location.href='http://localhost:3002/login'">进入站点 →</button>
+</div>
+
+</div>
+
+<footer>在线棋类对战平台 · 配置指南</footer>
+
+</body>
+</html>
