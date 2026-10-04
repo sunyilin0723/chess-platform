@@ -17,6 +17,15 @@ const userSchema = new mongoose.Schema({
     },
     default: () => ({ gomoku: 1200, go: 1200, chess: 1200, intl_chess: 1200 }),
   },
+  gameCounts: {
+    type: {
+      gomoku: { type: Number, default: 0 },
+      go: { type: Number, default: 0 },
+      chess: { type: Number, default: 0 },
+      intl_chess: { type: Number, default: 0 },
+    },
+    default: () => ({ gomoku: 0, go: 0, chess: 0, intl_chess: 0 }),
+  },
   deletedAt: { type: String, default: null },
   createdAt: { type: String, default: () => new Date().toISOString() },
 }, { collection: 'users' });

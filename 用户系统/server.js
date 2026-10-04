@@ -231,8 +231,8 @@ async function recordGame(winnerName, loserName, totalMoves, moves, gameType) {
     const lR = loserDoc ? getRating(loserDoc, gt) : (aiRatingOf(loserName) ?? 1200);
     const wDelta = eloDelta(wR, lR, 1);
     const lDelta = eloDelta(lR, wR, 0);
-    if (winnerDoc) await User.updateOne({ username: winnerName }, { $inc: { wins: 1, games: 1 }, $set: { [`ratings.${gt}`]: wR + wDelta } });
-    if (loserDoc) await User.updateOne({ username: loserName }, { $inc: { losses: 1, games: 1 }, $set: { [`ratings.${gt}`]: lR + lDelta } });
+    if (winnerDoc) await User.updateOne({ username: winnerName }, { $inc: { wins: 1, games: 1, [`gameCounts.${gt}`]: 1 }, $set: { [`ratings.${gt}`]: wR + wDelta } });
+    if (loserDoc) await User.updateOne({ username: loserName }, { $inc: { losses: 1, games: 1, [`gameCounts.${gt}`]: 1 }, $set: { [`ratings.${gt}`]: lR + lDelta } });
     const saved = await GameLog.create({ winner: winnerName, loser: loserName, totalMoves, gameType: gt, draw: false, moves: moves || [], time: new Date().toISOString() });
     console.log('[recordGame] 保存成功 ID:', saved._id, 'Elo:', wDelta >= 0 ? `+${wDelta}` : wDelta, '/', lDelta >= 0 ? `+${lDelta}` : lDelta);
   } catch (e) {
@@ -251,8 +251,8 @@ async function recordDraw(nameA, nameB, totalMoves, moves, gameType) {
     const rB = docB ? getRating(docB, gt) : (aiRatingOf(nameB) ?? 1200);
     const dA = eloDelta(rA, rB, 0.5);
     const dB = eloDelta(rB, rA, 0.5);
-    if (docA) await User.updateOne({ username: nameA }, { $inc: { draws: 1, games: 1 }, $set: { [`ratings.${gt}`]: rA + dA } });
-    if (docB) await User.updateOne({ username: nameB }, { $inc: { draws: 1, games: 1 }, $set: { [`ratings.${gt}`]: rB + dB } });
+    if (docA) await User.updateOne({ username: nameA }, { $inc: { draws: 1, games: 1, [`gameCounts.${gt}`]: 1 }, $set: { [`ratings.${gt}`]: rA + dA } });
+    if (docB) await User.updateOne({ username: nameB }, { $inc: { draws: 1, games: 1, [`gameCounts.${gt}`]: 1 }, $set: { [`ratings.${gt}`]: rB + dB } });
     await GameLog.create({ winner: nameA, loser: nameB, totalMoves, gameType: gt, draw: true, moves: moves || [], time: new Date().toISOString() });
     console.log('[recordDraw] 平局保存:', nameA, 'vs', nameB, gt, 'Elo:', dA, '/', dB);
   } catch (e) {
@@ -280,6 +280,34 @@ async function pushNotif(username, title, content) {
   await Notification.create({ id: genId(), username, title, content, time: new Date().toISOString() });
 }
 
+// ==================== Cloudflare Turnstile 人机验证 ====================
+const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY || '';
+async function verifyTurnstile(token) {
+  if (!TURNSTILE_SECRET_KEY) return true; // 未配置密钥则跳过验证
+  if (!token) {
+    console.log('[turnstile] 校验失败: token为空');
+    return false;
+  }
+  try {
+    const resp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret: TURNSTILE_SECRET_KEY, response: token }),
+    });
+    const data = await resp.json();
+    console.log('[turnstile] 校验结果:', data.success ? '通过' : '失败', 'error-codes:', JSON.stringify(data['error-codes'] || []));
+    return data.success === true;
+  } catch (e) {
+    console.error('[turnstile] 验证请求失败:', e.message);
+    return false;
+  }
+}
+
+// 前端获取 siteKey（siteKey 是公开的）
+app.get('/api/turnstile-key', (req, res) => {
+  res.json({ siteKey: process.env.TURNSTILE_SITE_KEY || '' });
+});
+
 // ==================== 认证路由 ====================
 app.post('/api/register', async (req, res) => {
   try {
@@ -288,6 +316,7 @@ app.post('/api/register', async (req, res) => {
     if (username.length < 2 || username.length > 10) return res.json({ error: '用户名2-10个字符' });
     if (/^AI \((简单|普通|困难)\)$/.test(username)) return res.json({ error: '不可使用系统AI名称' });
     if (password.length < 4) return res.json({ error: '密码至少4位' });
+    if (!(await verifyTurnstile(req.body.turnstileToken))) return res.json({ error: '人机验证失败，请重试' });
     const exists = await User.findOne({ username });
     if (exists) return res.json({ error: '用户名已存在' });
     const hashedPw = await hashPw(password);
@@ -342,9 +371,10 @@ async function authMiddleware(req, res, next) {
 // ==================== 排行榜 ====================
 app.get('/api/leaderboard', async (req, res) => {
   const game = ['gomoku', 'go', 'chess', 'intl_chess'].includes(req.query.game) ? req.query.game : 'gomoku';
-  const users = await User.find({ deletedAt: null }).select('username wins losses games draws ratings').lean();
+  const users = await User.find({ deletedAt: null }).select('username games gameCounts ratings').lean();
   const list = users.map(u => ({
-    username: u.username, games: u.games,
+    username: u.username,
+    games: (u.gameCounts && typeof u.gameCounts[game] === 'number') ? u.gameCounts[game] : 0,
     rating: getRating(u, game),
   }));
   list.sort((a, b) => b.rating - a.rating || b.games - a.games);
@@ -456,6 +486,7 @@ app.post('/api/delete-account', authMiddleware, async (req, res) => {
 app.post('/api/report', authMiddleware, async (req, res) => {
   const { target, reason, reasonType, screenshot } = req.body || {};
   if (!target || !reason) return res.status(400).json({ error: '请填写举报信息' });
+  if (!(await verifyTurnstile(req.body.turnstileToken))) return res.status(400).json({ error: '人机验证失败，请重试' });
   if (target === req.username) return res.status(400).json({ error: '不能举报自己' });
   const targetUser = await User.findOne({ username: target });
   if (!targetUser) return res.status(400).json({ error: '用户不存在' });
@@ -466,7 +497,14 @@ app.post('/api/report', authMiddleware, async (req, res) => {
       const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
       const filename = `${Date.now()}_${require('crypto').randomBytes(4).toString('hex')}.${ext}`;
       screenshotPath = `screenshots/${filename}`;
-      fs.writeFileSync(path.join(__dirname, 'data', screenshotPath), Buffer.from(matches[2], 'base64'));
+      try {
+        const dir = path.join(__dirname, 'data', 'screenshots');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, filename), Buffer.from(matches[2], 'base64'));
+      } catch (e) {
+        console.error('[report] 截图保存失败:', e.message);
+        screenshotPath = ''; // 截图保存失败不阻断举报
+      }
     }
   }
   await Report.create({ id: genId(), reporter: req.username, target, reason, reasonType: reasonType || 'other', screenshot: screenshotPath, status: 'pending', time: new Date().toISOString() });
@@ -558,6 +596,7 @@ app.get('/api/dm/unread', authMiddleware, async (req, res) => {
 app.post('/api/feedback', authMiddleware, async (req, res) => {
   const { content } = req.body || {};
   if (!content || !content.trim()) return res.status(400).json({ error: '请输入反馈内容' });
+  if (!(await verifyTurnstile(req.body.turnstileToken))) return res.status(400).json({ error: '人机验证失败，请重试' });
   const filteredContent = filterSensitive(content.trim());
   await Feedback.create({ id: genId(), from: req.username, content: filteredContent.substring(0, 1000), time: new Date().toISOString() });
   res.json({ ok: true });
@@ -1436,6 +1475,16 @@ app.post('/api/admin/force-delete', adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ==================== SPA 路由回退 ====================
+// /home、/leaderboard、/profile 等前端路由直接访问/刷新时返回 index.html
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // ==================== 启动 ====================
 const PORT = process.env.GAME_PORT || 3002;
-server.listen(PORT, '::', () => { console.log(`五子棋(用户版)运行在 http://localhost:${PORT} (IPv6: http://[::1]:${PORT})`); });
+server.listen(PORT, '::', () => {
+  console.log(`五子棋(用户版)运行在 http://localhost:${PORT} (IPv6: http://[::1]:${PORT})`);
+  if (process.env.SITE_URL) console.log(`对外地址: ${process.env.SITE_URL}（域名与 localhost 均可访问）`);
+});

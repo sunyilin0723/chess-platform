@@ -14,6 +14,40 @@ function escapeHtml(str){
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// ==================== Cloudflare Turnstile ====================
+let _turnstileSiteKey=null,_turnstileWidgets={};
+async function getTurnstileSiteKey(){
+  if(_turnstileSiteKey!==null)return _turnstileSiteKey;
+  try{const r=await fetch('/api/turnstile-key');const j=await r.json();_turnstileSiteKey=j.siteKey||''}catch{_turnstileSiteKey=''}
+  return _turnstileSiteKey;
+}
+// 等待 turnstile 脚本加载（async defer，可能未就绪）
+function waitTurnstileScript(){
+  return new Promise(resolve=>{
+    if(window.turnstile)return resolve();
+    const t=setInterval(()=>{if(window.turnstile){clearInterval(t);resolve()}},200);
+    setTimeout(()=>{clearInterval(t);resolve()},5000);
+  });
+}
+// 渲染（或重置）验证控件；siteKey 未配置时不做任何事
+async function ensureTurnstile(name,containerId){
+  const key=await getTurnstileSiteKey();
+  if(!key)return;
+  await waitTurnstileScript();
+  if(!window.turnstile)return;
+  const container=document.getElementById(containerId);
+  if(!container)return;
+  if(_turnstileWidgets[name]!==undefined){try{turnstile.reset(_turnstileWidgets[name])}catch(_){}return}
+  _turnstileWidgets[name]=turnstile.render(container,{sitekey:key,theme:'auto'});
+}
+function getTurnstileToken(name){
+  if(!window.turnstile||_turnstileWidgets[name]===undefined)return '';
+  try{return turnstile.getResponse(_turnstileWidgets[name])||''}catch{return ''}
+}
+function resetTurnstile(name){
+  if(window.turnstile&&_turnstileWidgets[name]!==undefined){try{turnstile.reset(_turnstileWidgets[name])}catch(_){}}
+}
+
 const canvas=document.getElementById('canvas');
 const ctx=canvas.getContext('2d');
 
@@ -28,6 +62,30 @@ document.addEventListener('DOMContentLoaded',()=>{
   initGameSlider();
   // 默认选中五子棋，显示禁手选项
   selectGame('gomoku',document.querySelector('.game-slider-item.selected'));
+});
+
+// ==================== 前端路由 ====================
+const VIEW_PATHS = { lobby: '/home', auth: '/login', leaderboard: '/leaderboard', profile: '/profile', game: '/game' };
+const PATH_VIEWS = { '/': 'lobby', '/home': 'lobby', '/login': 'auth', '/leaderboard': 'leaderboard', '/profile': 'profile' };
+let _routing = false; // popstate 导航时禁止再 pushState
+
+function pathForView(name) {
+  return VIEW_PATHS[name] || '/home';
+}
+function viewForPath(p) {
+  if (PATH_VIEWS[p]) return PATH_VIEWS[p];
+  if (p.startsWith('/profile')) return 'profile';
+  // 含 /game 及未知路径：对局不可从 URL 还原，回大厅
+  return 'lobby';
+}
+function syncUrl(name) {
+  if (_routing) { _routing = false; return; }
+  const path = pathForView(name);
+  if (location.pathname !== path) history.pushState({ view: name }, '', path);
+}
+window.addEventListener('popstate', () => {
+  _routing = true;
+  showView(viewForPath(location.pathname));
 });
 
 function showView(name){
@@ -68,6 +126,7 @@ function showView(name){
   else{nav.classList.add('show');document.getElementById('nav-username').textContent=currentUser}
   if(name==='profile')loadProfile(currentUser);
   if(name==='leaderboard')loadLeaderboard();
+  syncUrl(name);
 }
 function switchTab(t){
   document.getElementById('tab-login').className=t==='login'?'active':'';
@@ -75,6 +134,8 @@ function switchTab(t){
   document.getElementById('form-login').style.display=t==='login'?'block':'none';
   document.getElementById('form-register').style.display=t==='register'?'block':'none';
   document.getElementById('auth-error').textContent='';
+  // 切到注册页时渲染人机验证（容器需先可见）
+  if(t==='register')ensureTurnstile('register','register-turnstile');
 }
 function authError(msg){document.getElementById('auth-error').textContent=msg}
 async function apiFetch(path,opts){
@@ -104,12 +165,13 @@ async function doRegister(){
   const password2=document.getElementById('reg-pw2').value;
   if(!username||!password)return authError('请输入用户名和密码');
   if(password!==password2)return authError('两次密码不一致');
-  try{const d=await apiFetch('/api/register',{method:'POST',body:JSON.stringify({username,password})});
-  if(d.error)return authError(d.error);
+  const turnstileToken=getTurnstileToken('register');
+  try{const d=await apiFetch('/api/register',{method:'POST',body:JSON.stringify({username,password,turnstileToken})});
+  if(d.error){resetTurnstile('register');return authError(d.error);}
   token=d.token;currentUser=d.username;localStorage.setItem('gomoku_token',token);localStorage.setItem('gomoku_user',currentUser);
   document.getElementById('lobby-greeting').textContent='欢迎，'+currentUser;showView('lobby');
   document.getElementById('welcome-dialog').style.display='flex';
-  }catch(e){authError(e.message)}
+  }catch(e){resetTurnstile('register');authError(e.message)}
 }
 function closeWelcomeDialog(){document.getElementById('welcome-dialog').style.display='none'}
 async function logout(){
@@ -137,7 +199,20 @@ async function logout(){
   document.getElementById('dm-conv-messages').innerHTML='';
   showView('auth')
 }
-async function checkLogin(){if(!token)return showView('auth');try{const d=await apiFetch('/api/me');currentUser=d.username||currentUser;localStorage.setItem('gomoku_user',currentUser);document.getElementById('lobby-greeting').textContent='欢迎，'+currentUser;loadNotifs();showView('lobby')}catch{showView('auth')}}
+async function checkLogin(){
+  if(!token){showView('auth');return}
+  try{
+    const d=await apiFetch('/api/me');
+    currentUser=d.username||currentUser;
+    localStorage.setItem('gomoku_user',currentUser);
+    document.getElementById('lobby-greeting').textContent='欢迎，'+currentUser;
+    loadNotifs();
+    // 按当前 URL 路由（支持直接访问 /leaderboard、/profile 等）
+    let target=viewForPath(location.pathname);
+    if(target==='auth')target='lobby'; // 已登录访问 /login → 大厅
+    showView(target);
+  }catch{showView('auth')}
+}
 function selectTimer(secs,btn){selectedTimer=secs;document.querySelectorAll('.timer-select button').forEach(b=>b.classList.remove('sel'));btn.classList.add('sel')}
 function selectMode(mode,btn){
   selectedMode=mode;

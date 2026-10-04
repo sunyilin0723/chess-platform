@@ -51,6 +51,7 @@
 - 举报-审核-封禁机制
 - 申诉系统
 - 临时禁言（3次违规警告，10分钟封禁）
+- **Cloudflare Turnstile 人机验证**（注册、举报、反馈三个入口；未配置密钥时自动跳过）
 
 ### 安全特性
 - WebSocket Token认证（连接后5秒内验证）
@@ -121,6 +122,16 @@ ADMIN_PASSWORD=admin123
 
 # 管理员API密钥（游戏服务器与管理服务器必须一致，否则管理后台看不到实时对局）
 ADMIN_KEY=your-secret-key
+
+# Cloudflare Turnstile（注册/举报/反馈人机验证）
+# 测试密钥见 https://developers.cloudflare.com/turnstile/reference/testing-keys/
+# 正式部署到 Cloudflare 控制台创建 Turnstile 站点后替换；留空则跳过验证
+TURNSTILE_SITE_KEY=your-site-key
+TURNSTILE_SECRET_KEY=your-secret-key
+
+# 站点对外访问地址（可选，如 https://chess.example.com，留空则仅 localhost）
+# 用户端通过域名或 localhost 均可访问；管理后台会同时尝试 localhost 与该地址连接游戏服
+SITE_URL=
 ```
 
 > **注意**：`ADMIN_KEY` 必须在 `.env` 中配置且两边一致。若未配置，游戏服务器每次重启会生成随机密钥，导致管理后台认证失败。
@@ -143,6 +154,18 @@ node server.js
 
 - 游戏平台：http://localhost:3002
 - 管理后台：http://localhost:3003
+
+### 前端路由
+
+| 路径 | 页面 |
+|------|------|
+| `/home` | 大厅 |
+| `/leaderboard` | 排行榜 |
+| `/profile` | 个人主页 |
+| `/game` | 对局中（刷新后回大厅，对局需 WS 无法从 URL 还原） |
+| `/login` | 登录/注册 |
+
+支持直接访问、刷新、浏览器前进/后退；未登录访问受保护路由会跳转登录页。服务端对非 `/api` 的 GET 请求回退返回 `index.html`（反向代理无需额外配置）。
 
 ---
 
@@ -373,6 +396,8 @@ node server.js
 14. 观战者只能看棋和聊天，不能走棋/悔棋/求和/认输/重开（服务端+前端双重校验）
 15. 玩家退出房间会清理其名字，剩余玩家自动重置等待新对手；死连接在加入时自动清理
 16. 围棋已实现简单劫（禁止立即提回上一手被提的棋）
+17. Turnstile 验证码是一次性的：每次提交失败后前端自动重置控件；未配置 `TURNSTILE_SECRET_KEY` 时服务端跳过验证
+18. 排行榜"总场"为所选棋类的场次（`gameCounts`），非全品类总场
 
 ## 已修复的关键Bug
 

@@ -22,6 +22,17 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
 const GAME_SERVER = 'http://localhost:' + (process.env.GAME_PORT || '3002');
+// 对外域名（可选）：localhost 与域名两条路都可用，任一可达即成功
+const SITE_URL = (process.env.SITE_URL || '').replace(/\/+$/, '');
+const gameBases = [...new Set([GAME_SERVER, SITE_URL].filter(Boolean))];
+async function fetchGame(pathAndQuery, opts) {
+  let lastErr;
+  for (const base of gameBases) {
+    try { return await fetch(base + pathAndQuery, opts); }
+    catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
 const ADMIN_KEY = process.env.ADMIN_KEY || 'no-key-configured';
 
 // MongoDB 连接
@@ -263,7 +274,7 @@ function checkAutoBan(target) {
 
 app.get('/api/rooms', adminAuth, async (req, res) => {
   try {
-    const rooms = await fetch(GAME_SERVER + '/api/admin/rooms', { headers: { 'Authorization': 'Bearer ' + ADMIN_KEY } });
+    const rooms = await fetchGame('/api/admin/rooms', { headers: { 'Authorization': 'Bearer ' + ADMIN_KEY } });
     const data = await rooms.json();
     res.json(Array.isArray(data) ? data.filter(r => !r.gameOver) : []);
   } catch { res.json([]); }

@@ -345,6 +345,7 @@ window.openFeedbackDialog=function(){
   document.getElementById('feedback-dialog').style.display='flex';
   document.getElementById('feedback-input').value='';
   document.getElementById('feedback-msg').textContent='';
+  ensureTurnstile('feedback','feedback-turnstile');
 };
 window.closeFeedbackDialog=function(){
   document.getElementById('feedback-dialog').style.display='none';
@@ -353,12 +354,16 @@ window.submitFeedback=function(){
   const content=document.getElementById('feedback-input').value.trim();
   const msgEl=document.getElementById('feedback-msg');
   if(!content){msgEl.textContent='请输入反馈内容';msgEl.style.color='#e74c3c';return}
-  apiFetch('/api/feedback',{method:'POST',body:JSON.stringify({content})}).then(()=>{
+  const turnstileToken=getTurnstileToken('feedback');
+  apiFetch('/api/feedback',{method:'POST',body:JSON.stringify({content,turnstileToken})}).then(()=>{
     msgEl.textContent='反馈已提交，管理员回复后会通过站内通知告知';
     msgEl.style.color='#2ecc71';
     document.getElementById('feedback-input').value='';
     setTimeout(()=>closeFeedbackDialog(),1500);
-  }).catch(e=>{msgEl.textContent=e.message;msgEl.style.color='#e74c3c'});
+  }).catch(e=>{
+    msgEl.textContent=e.message;msgEl.style.color='#e74c3c';
+    resetTurnstile('feedback');
+  });
 };
 window.onNewDm=function(from){
   const b=document.getElementById('dm-badge');
@@ -388,6 +393,7 @@ function showReportDialog(){
   document.querySelectorAll('#report-type-btns button').forEach(b=>{b.classList.remove('selected');b.style.borderColor='#333';b.style.color='#ccc'});
   document.getElementById('report-dialog').classList.add('show');
   document.getElementById('report-target-name').textContent='举报：'+opp;
+  ensureTurnstile('report','report-turnstile');
 }
 function closeReportDialog(){document.getElementById('report-dialog').classList.remove('show')}
 function captureBoard(){reportScreenshot=canvas.toDataURL('image/png');document.getElementById('screenshot-preview').innerHTML=`<img src="${reportScreenshot}" style="max-width:100%;max-height:200px;border-radius:6px;border:1px solid #333">`}
@@ -398,7 +404,15 @@ async function submitReport(){
   if(!rt){alert('请选择举报类型');return}
   if(!reportScreenshot){alert('请上传截图');return}
   const detail=document.getElementById('report-detail').value.trim();
-  try{await apiFetch('/api/report',{method:'POST',body:JSON.stringify({target,reason:detail||rt.dataset.type,reasonType:rt.dataset.type,screenshot:reportScreenshot})});alert('举报已提交');closeReportDialog()}catch(e){alert(e.message)}
+  const turnstileToken=getTurnstileToken('report');
+  console.log('[turnstile] 举报token长度:', turnstileToken.length, 'widget:', _turnstileWidgets['report']);
+  try{
+    await apiFetch('/api/report',{method:'POST',body:JSON.stringify({target,reason:detail||rt.dataset.type,reasonType:rt.dataset.type,screenshot:reportScreenshot,turnstileToken})});
+    alert('举报已提交');closeReportDialog();
+  }catch(e){
+    alert(e.message);
+    resetTurnstile('report');
+  }
 }
 function loadProfile(username){
   const el=document.getElementById('profile-content');
