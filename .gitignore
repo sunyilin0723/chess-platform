@@ -16,3 +16,8 @@ build/
 *.swo
 
 *.bat
+
+# TLS 证书与私钥（Cloudflare Origin Certificate），绝不入库
+certs/
+*.pem
+*.key

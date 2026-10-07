@@ -113,6 +113,7 @@ function doConnect(roomId, mode, difficulty, forbidden){
         document.getElementById('btn-report').style.display='';
       }
       updatePlayersInfo();drawBoard();setStatus(isAI?'等待AI加入...':'等待对手加入...');
+      if(!isAI) maybeAskNotification(); // PvP 对局请求系统通知权限（仅一次）
     }
     if(msg.type==='error'){addChat('⚠ '+msg.msg,'msg-alert')}
     if(msg.type==='names'){playerNames=msg.names;updatePlayersInfo()}
@@ -121,7 +122,10 @@ function doConnect(roomId, mode, difficulty, forbidden){
       // 关闭先手选择弹窗
       document.getElementById('choose-first').classList.remove('show');
       if(isSpectator){updateSpectatorTurnStatus();addChat('对局开始！','msg-sys')}
-      else{updateTurnStatus();addChat('对局开始！','msg-sys')}
+      else{
+        updateTurnStatus();addChat('对局开始！','msg-sys');
+        if(turn===myColor) notifyMyTurn(); // 我先手
+      }
     }
     if(msg.type==='choose_first'&&!isSpectator){
       // 对局已开始或已在选择中则不重复弹出
@@ -151,6 +155,15 @@ function doConnect(roomId, mode, difficulty, forbidden){
       }
       lastMove=msg.lastMove;turn=msg.turn;
       drawBoard();
+      // 音效：本步未分胜负时按棋类播放
+      const stepWin=msg.win!==undefined&&msg.win!==0;
+      if(!stepWin){
+        if(gameType==='gomoku'||gameType==='go') playStoneSound();
+        else if(msg.captured&&msg.captured!==''&&msg.captured!==undefined) playCaptureSound();
+        else playChessSound();
+      }
+      // 对手落子后轮到我 → 提醒
+      if(!stepWin&&!isSpectator&&!gameOver&&turn===myColor) notifyMyTurn();
       if(isSpectator){
         if(msg.win!==undefined&&msg.win!==0){
           gameOver=true;
@@ -177,6 +190,14 @@ function doConnect(roomId, mode, difficulty, forbidden){
     }
     if(msg.type==='game_over'){
       gameOver=true;
+      // 结算音效
+      if(isSpectator){
+        if(msg.winner===0) playDrawSound(); else playWinSound();
+      } else {
+        if(msg.winner===0) playDrawSound();
+        else if(msg.winner===myColor) playWinSound();
+        else playLoseSound();
+      }
       if(isSpectator){
         if(msg.winner===0){
           setStatus('🤝 '+msg.reason);addChat(msg.reason,'msg-sys');
@@ -198,7 +219,10 @@ function doConnect(roomId, mode, difficulty, forbidden){
       board=msg.board||board;turn=msg.turn;moveCount=msg.moveCount;lastMove=null;
       gameOver=false;drawBoard();
       if(isSpectator)updateSpectatorTurnStatus();
-      else updateTurnStatus();
+      else{
+        updateTurnStatus();
+        if(turn===myColor) notifyMyTurn(); // 悔棋后轮到我
+      }
       addChat('悔棋成功','msg-sys');
     }
     if(msg.type==='undo_rejected'&&!isSpectator){addChat('对手拒绝了悔棋请求','msg-sys')}

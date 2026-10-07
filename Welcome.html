@@ -132,8 +132,19 @@ brew install mongodb-community@8.0</pre>
         <div class="dl-cmd-label">Node.js 安装（命令）：</div>
         <pre>curl -fsSL https://mirrors.aliyun.com/nodesource/deb_20.x/setup | sudo -E bash -
 sudo apt install -y nodejs</pre>
+        <div class="dl-cmd-label">安装完启动 MongoDB：</div>
+        <pre>sudo systemctl enable --now mongod</pre>
       </div>
     </div>
+  </div>
+  <div class="tip">🔍 <b>验证安装</b>：三条命令都出结果、MongoDB 服务为 running 即就绪，再往下走。
+<pre style="margin:8px 0 0">node -v          <span class="cm"># 应输出 v18 及以上</span>
+npm -v           <span class="cm"># 应输出版本号</span>
+
+<span class="cm"># MongoDB 是否在运行（三选一，按你的系统来）</span>
+sc query MongoDB                 <span class="cm"># Windows：STATE 应为 RUNNING</span>
+brew services list               <span class="cm"># macOS：mongodb-community 应为 started</span>
+systemctl is-active mongod       <span class="cm"># Linux：应输出 active</span></pre>
   </div>
 </section>
 
@@ -152,8 +163,29 @@ npm install</pre>
 
 <!-- 第三步 -->
 <section>
-  <h2 class="sec-title"><span class="no">3</span>配置 .env</h2>
-  <p class="sec-sub">编辑项目根目录（用户版本/.env），各字段说明如下</p>
+  <h2 class="sec-title"><span class="no">3</span>新建 .env</h2>
+  <p class="sec-sub">仓库<b>不含</b> .env（已被 git 忽略）。请在项目根目录（用户版本/）<b>新建</b>一个名为 <code>.env</code> 的文件，把下面的模板整段复制进去，再按需修改</p>
+  <pre><span class="cm"># 游戏服务器端口</span>
+GAME_PORT=3002
+<span class="cm"># 管理后台端口</span>
+ADMIN_PORT=3003
+<span class="cm"># 数据库地址</span>
+MONGO_URI=mongodb://localhost:27017/chess-platform
+<span class="cm"># 主管理员账号（首次启动管理后台时创建）</span>
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=改成你的密码
+<span class="cm"># 两个服务器共用的通信密钥（两边必须完全一致）</span>
+ADMIN_KEY=改成一串随机字符
+<span class="cm"># 人机验证（留空 = 跳过验证，本地开发建议留空）</span>
+TURNSTILE_SITE_KEY=
+TURNSTILE_SECRET_KEY=
+<span class="cm"># 对外域名（公网部署时才填，不带端口，如 https://chess.example.com）</span>
+SITE_URL=
+<span class="cm"># HTTPS（可选）：Cloudflare Origin Certificate，配了就在 443 走 HTTPS</span>
+<span class="cm"># 留空 = HTTP 启动，本地开发不用配</span>
+SSL_CERT_PATH=
+SSL_KEY_PATH=</pre>
+  <div class="warn">⚠️ <b>别把 .env 提交进 git</b>：它已被 <code>.gitignore</code> 排除，保持这样即可，密钥泄露会导致他人冒用你的管理员账号。</div>
   <table>
     <tr><th>变量</th><th>必填</th><th>说明</th></tr>
     <tr><td><code>GAME_PORT</code></td><td>建议</td><td>游戏服务器端口，默认 <code>3002</code></td></tr>
@@ -164,7 +196,9 @@ npm install</pre>
     <tr><td><code>ADMIN_KEY</code></td><td><span class="req">必填</span></td><td>两个服务器共用的通信密钥，<b>必须一致</b>，否则管理后台看不到实时对局</td></tr>
     <tr><td><code>TURNSTILE_SITE_KEY</code></td><td>可选</td><td>人机验证 siteKey；<b>留空 = 跳过验证</b>（本地开发建议留空）</td></tr>
     <tr><td><code>TURNSTILE_SECRET_KEY</code></td><td>可选</td><td>人机验证 secretKey，与上面成对配置</td></tr>
-    <tr><td><code>SITE_URL</code></td><td>可选</td><td>对外域名（如 <code>https://chess.example.com</code>），部署到公网时填</td></tr>
+    <tr><td><code>SITE_URL</code></td><td>可选</td><td>对外域名，<b>不带端口</b>（如 <code>https://chess.example.com</code>），部署到公网时填</td></tr>
+    <tr><td><code>SSL_CERT_PATH</code></td><td>可选</td><td>Origin 证书路径（相对项目根目录，如 <code>certs/origin.pem</code>）；填写后游戏服在 443 提供 <b>HTTPS</b>，留空走 HTTP</td></tr>
+    <tr><td><code>SSL_KEY_PATH</code></td><td>可选</td><td>私钥路径（如 <code>certs/origin.key</code>），与上一项成对使用；<b>私钥别提交进 git</b>（已加入 .gitignore）</td></tr>
   </table>
   <div class="tip">💡 <b>最简配置</b>：本地跑通只需填 <code>MONGO_URI</code>、<code>ADMIN_USERNAME</code>、<code>ADMIN_PASSWORD</code>、<code>ADMIN_KEY</code> 四项，其余留默认/留空即可。</div>
 </section>
@@ -186,6 +220,7 @@ node server.js</pre>
     <tr><td><code>http://localhost:3002/home</code></td><td>大厅（需先登录）</td></tr>
     <tr><td><code>http://localhost:3003</code></td><td>管理后台（用 ADMIN_USERNAME/PASSWORD 登录）</td></tr>
   </table>
+  <div class="tip">🌐 <b>用域名访问时不用带端口</b>：配好 Cloudflare Origin 证书（见常见问题）或反向代理后，直接打开 <code>http://你的域名</code> / <code>https://你的域名</code> 即可，浏览器地址里<b>不需要</b>写 <code>:3002</code>；下面的 <code>localhost:3002</code> 只是本地开发用的地址。</div>
 </section>
 
 <!-- 首次使用 -->
@@ -207,7 +242,7 @@ node server.js</pre>
   <h2 class="sec-title">❓ 常见问题</h2>
   <div class="faq">
     <h4>启动报 MongoDB 连接失败？</h4>
-    <p>先启动 MongoDB（项目根目录有 <code>启动MongoDB.bat</code>），或检查 <code>MONGO_URI</code> 是否正确。</p>
+    <p>先确认 MongoDB 服务在运行：Windows 在 <code>services.msc</code> 里找 <code>MongoDB</code>，macOS 执行 <code>brew services list</code>，Linux 执行 <code>systemctl status mongod</code>；服务没起就先启动它（见第 1 步的命令）。服务正常则检查 <code>MONGO_URI</code> 是否写对。</p>
     <h4>管理后台看不到实时对局？</h4>
     <p>两端 <code>ADMIN_KEY</code> 必须完全一致，改完需<b>重启两个服务</b>。</p>
     <h4>改了前端代码没生效？</h4>
@@ -216,8 +251,14 @@ node server.js</pre>
     <p>本地开发建议把 <code>TURNSTILE_SITE_KEY</code> / <code>TURNSTILE_SECRET_KEY</code> <b>留空</b>（跳过验证）；正式使用需到 Cloudflare 控制台创建 Turnstile 站点，且 hostname 包含你访问用的域名或 localhost。</p>
     <h4>端口被占用？</h4>
     <p>修改 <code>.env</code> 中的 <code>GAME_PORT</code> / <code>ADMIN_PORT</code> 后重启。</p>
+    <h4>想用域名直接开 HTTPS（访问不带端口）？</h4>
+    <p>用 <b>Cloudflare Origin Certificate</b> 让 Node 自己在 443 上说 HTTPS：</p>
+    <p>① Cloudflare 控制台 → <b>SSL/TLS → Origin Server → Create Certificate</b>（域名填你的站点）→ 把 <b>Origin Certificate</b> 全文存成 <code>certs/origin.pem</code>、<b>Private Key</b> 全文存成 <code>certs/origin.key</code>（放在项目根目录，即 <code>.env</code> 同级）；<br>
+    ② <code>.env</code> 填 <code>SSL_CERT_PATH=certs/origin.pem</code>、<code>SSL_KEY_PATH=certs/origin.key</code>，重启游戏服务器，日志出现 <code>[ssl] 已加载 Origin 证书</code> 即成功；<br>
+    ③ Cloudflare 后台 SSL/TLS 加密模式选 <b>Full (strict)</b>——Origin 证书只用于 Cloudflare ↔ 源站这一段，浏览器不认它，别指望 <code>https://localhost</code> 直接通过；<br>
+    ④ 私钥文件已在 <code>.gitignore</code> 里，<b>不要提交进 git</b>。</p>
     <h4>公网部署要注意什么？</h4>
-    <p>① 反向代理需转发 WebSocket（Upgrade 头）；② 填写 <code>SITE_URL</code>；③ 配置真实的 Turnstile 密钥；④ 关闭 MongoDB 对公网的访问。</p>
+    <p>两种做法任选：① 上面的 Origin Certificate 方案，游戏服自己在 443 提供 HTTPS；② 或用 Nginx/Caddy 反代监听 <code>80/443</code> 转发到本机游戏端口，转发必须带 WebSocket 升级头（<code>Upgrade</code>/<code>Connection</code>），否则连不上对局。无论哪种，用户都<b>直接访问域名即可，不用加 <code>:端口</code></b>；<code>SITE_URL</code> 填不带端口的域名；Turnstile 的 hostname 要包含该域名；MongoDB 不要对公网开放。</p>
   </div>
 </section>
 

@@ -17,11 +17,37 @@ if (fs.existsSync(envPath)) {
 
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const { WebSocketServer } = require('ws');
 const mongoose = require('mongoose');
 
 const app = express();
-const server = http.createServer(app);
+
+// HTTPS（可选）：配置了 Cloudflare Origin Certificate 时用 TLS 提供服务，否则回退 HTTP
+// SSL_CERT_PATH / SSL_KEY_PATH 相对路径以项目根目录（.env 所在目录）为基准
+const resolveEnvPath = (p) => (path.isAbsolute(p) ? p : path.join(__dirname, '..', p));
+const sslCertPath = process.env.SSL_CERT_PATH ? resolveEnvPath(process.env.SSL_CERT_PATH) : '';
+const sslKeyPath = process.env.SSL_KEY_PATH ? resolveEnvPath(process.env.SSL_KEY_PATH) : '';
+let usingHTTPS = false;
+let server;
+if (sslCertPath && sslKeyPath) {
+  if (fs.existsSync(sslCertPath) && fs.existsSync(sslKeyPath)) {
+    server = https.createServer({
+      key: fs.readFileSync(sslKeyPath),
+      cert: fs.readFileSync(sslCertPath)
+    }, app);
+    usingHTTPS = true;
+    console.log(`[ssl] 已加载 Origin 证书: ${sslCertPath}`);
+  } else {
+    console.warn('[ssl] 已配置 SSL_CERT_PATH/SSL_KEY_PATH 但文件不存在，回退 HTTP:', sslCertPath, sslKeyPath);
+    server = http.createServer(app);
+  }
+} else if (sslCertPath || sslKeyPath) {
+  console.warn('[ssl] SSL_CERT_PATH 与 SSL_KEY_PATH 必须成对配置，当前回退 HTTP');
+  server = http.createServer(app);
+} else {
+  server = http.createServer(app);
+}
 const wss = new WebSocketServer({ server });
 
 // 导入模块
@@ -1485,6 +1511,7 @@ app.get('*', (req, res, next) => {
 // ==================== 启动 ====================
 const PORT = process.env.GAME_PORT || 3002;
 server.listen(PORT, '::', () => {
-  console.log(`五子棋(用户版)运行在 http://localhost:${PORT} (IPv6: http://[::1]:${PORT})`);
+  const scheme = usingHTTPS ? 'https' : 'http';
+  console.log(`五子棋(用户版)运行在 ${scheme}://localhost:${PORT} (IPv6: ${scheme}://[::1]:${PORT})${usingHTTPS ? ' [HTTPS]' : ''}`);
   if (process.env.SITE_URL) console.log(`对外地址: ${process.env.SITE_URL}（域名与 localhost 均可访问）`);
 });

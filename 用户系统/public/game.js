@@ -58,6 +58,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   // 初始化主题
   const savedTheme=localStorage.getItem('gomoku_theme')||'dark';
   document.documentElement.setAttribute('data-theme',savedTheme);
+  // 音效开关图标
+  updateSoundBtn();
+  updateNotifyBtn();
   // 初始化棋类选择滑块
   initGameSlider();
   // 默认选中五子棋，显示禁手选项
@@ -367,3 +370,129 @@ document.addEventListener('click',function(e){
     hamburger.classList.remove('active');
   }
 });
+
+// ==================== 音效系统（Web Audio 合成，无音频文件） ====================
+let _audioCtx = null;
+let soundEnabled = localStorage.getItem('gomoku_sound') !== '0';
+function ensureAudio(){
+  if(!_audioCtx){
+    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch(e){ return null; }
+  }
+  if(_audioCtx.state === 'suspended') _audioCtx.resume();
+  return _audioCtx;
+}
+// 首次用户手势时解锁 AudioContext（浏览器要求）
+document.addEventListener('pointerdown', () => { if(soundEnabled) ensureAudio(); }, { passive: true });
+
+function playTone(freq, dur, type, vol, when){
+  if(!soundEnabled) return;
+  const ctx = ensureAudio(); if(!ctx) return;
+  const t = ctx.currentTime + (when || 0);
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = type || 'sine';
+  o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(vol || 0.3, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t + dur + 0.03);
+}
+// 落子（五子棋/围棋）：低沉短促"哒"
+function playStoneSound(){ playTone(200, 0.06, 'triangle', 0.5); playTone(90, 0.1, 'sine', 0.3, 0.01); }
+// 走棋（象棋/国际象棋）：清脆落盘
+function playChessSound(){ playTone(520, 0.04, 'square', 0.1); playTone(260, 0.07, 'sine', 0.2, 0.02); }
+// 吃子：双声
+function playCaptureSound(){ playTone(340, 0.05, 'square', 0.15); playTone(500, 0.06, 'square', 0.15, 0.07); }
+// 胜利：上行三连音
+function playWinSound(){ playTone(523, 0.16, 'sine', 0.3); playTone(659, 0.16, 'sine', 0.3, 0.13); playTone(784, 0.3, 'sine', 0.3, 0.26); }
+// 失败：下行三连音
+function playLoseSound(){ playTone(392, 0.22, 'sine', 0.3); playTone(311, 0.22, 'sine', 0.3, 0.16); playTone(233, 0.35, 'sine', 0.3, 0.32); }
+// 平局：双音
+function playDrawSound(){ playTone(392, 0.2, 'sine', 0.28); playTone(440, 0.25, 'sine', 0.28, 0.2); }
+// 提示音（轮到你了）
+function playNotifSound(){ playTone(880, 0.12, 'sine', 0.3); playTone(1174, 0.15, 'sine', 0.3, 0.12); }
+function toggleSound(){
+  soundEnabled = !soundEnabled;
+  localStorage.setItem('gomoku_sound', soundEnabled ? '1' : '0');
+  updateSoundBtn();
+  if(soundEnabled) playTone(880, 0.1, 'sine', 0.3); // 开启时响一声反馈
+}
+function updateSoundBtn(){
+  const b = document.getElementById('btn-sound');
+  if(b) b.textContent = soundEnabled ? '🔊' : '🔇';
+}
+
+// ==================== 轮到你了 · 通知 ====================
+let _titleTimer = null;
+const _origTitle = document.title;
+function stopTitleFlash(){
+  if(_titleTimer){ clearInterval(_titleTimer); _titleTimer = null; document.title = _origTitle; }
+}
+document.addEventListener('visibilitychange', () => { if(!document.hidden) stopTitleFlash(); });
+window.addEventListener('focus', stopTitleFlash);
+
+// 系统通知是否可用且未被关闭
+function notifyEnabled(){
+  return window.Notification && Notification.permission === 'granted' && localStorage.getItem('gomoku_notify') !== '0';
+}
+function updateNotifyBtn(){
+  const b = document.getElementById('btn-notify');
+  if(!b) return;
+  b.textContent = notifyEnabled() ? '🔔' : '🔕';
+}
+// 手动开关（点击 = 用户手势，浏览器必定弹出授权框）
+function toggleNotify(){
+  if(!window.Notification){ alert('当前浏览器不支持系统通知'); return; }
+  if(Notification.permission === 'denied'){
+    alert('浏览器已拒绝通知权限。\n开启方法：点击地址栏左侧的锁图标 → 网站设置 → 通知 → 允许，然后刷新页面。');
+    return;
+  }
+  if(Notification.permission === 'default'){
+    // 未授权：请求授权（用户手势保证弹窗）
+    Promise.resolve(Notification.requestPermission()).then(p => {
+      if(p === 'granted'){
+        localStorage.setItem('gomoku_notify', '1');
+        updateNotifyBtn();
+        try { new Notification('🔔 通知已开启', { body: '对手落子时将收到提醒', tag: 'notify-test' }); } catch(e){}
+      } else if(p === 'denied'){
+        alert('权限被拒绝。\n开启方法：点击地址栏左侧的锁图标 → 网站设置 → 通知 → 允许，然后刷新页面。');
+      }
+    }).catch(()=>{});
+    return;
+  }
+  // 已授权 → 开关
+  const wasOn = localStorage.getItem('gomoku_notify') !== '0';
+  localStorage.setItem('gomoku_notify', wasOn ? '0' : '1');
+  updateNotifyBtn();
+  if(wasOn === false){ try { new Notification('🔔 通知已开启', { tag: 'notify-test' }); } catch(e){} }
+}
+function notifyMyTurn(){
+  playNotifSound();
+  // 系统通知（已授权且未关闭时）
+  if(notifyEnabled()){
+    try { new Notification('♟ 轮到你了！', { body: '对手已落子，轮到你走棋', tag: 'my-turn' }); } catch(e){}
+  }
+  // 标签页在后台 → 标题栏闪烁
+  if(document.hidden && !_titleTimer){
+    let on = false;
+    _titleTimer = setInterval(() => {
+      on = !on;
+      document.title = on ? '🔴 轮到你了！' : _origTitle;
+    }, 1000);
+  }
+}
+// 进入对局时请求一次系统通知权限
+function maybeAskNotification(){
+  if(!window.Notification) { updateNotifyBtn(); return; }
+  updateNotifyBtn();
+  if(Notification.permission === 'default' && !localStorage.getItem('gomoku_notif_asked')){
+    try {
+      Promise.resolve(Notification.requestPermission()).then(p => {
+        // 只有明确授权/拒绝才标记已询问；未弹出(default)下次再试
+        if(p && p !== 'default') localStorage.setItem('gomoku_notif_asked', '1');
+        if(p === 'granted') localStorage.setItem('gomoku_notify', '1');
+        updateNotifyBtn();
+      }).catch(()=>{});
+    } catch(e){}
+  }
+}

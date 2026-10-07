@@ -122,6 +122,8 @@
     <canvas id="canvas"></canvas>
     <div id="game-info">
       <span id="room-id" title="点击复制房间号"></span>
+      <button id="btn-sound" onclick="toggleSound()" title="音效开关" style="padding:4px 10px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;font-size:14px;cursor:pointer;color:var(--text-secondary)">🔊</button>
+      <button id="btn-notify" onclick="toggleNotify()" title="系统通知开关（轮到你时弹桌面通知）" style="padding:4px 10px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;font-size:14px;cursor:pointer;color:var(--text-secondary)">🔕</button>
       <div id="game-btns">
         <button id="btn-pass" onclick="sendPass()" style="display:none">Pass</button>
         <button id="btn-undo" onclick="sendUndo()">悔棋</button>
@@ -286,8 +288,8 @@
   </div>
 </div>
 
-<script src="game.js?v=12"></script>
-<script src="game2.js?v=14"></script>
+<script src="game.js?v=14"></script>
+<script src="game2.js?v=15"></script>
 <script src="game3.js?v=15"></script>
 </body>
 </html>

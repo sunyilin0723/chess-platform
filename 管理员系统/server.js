@@ -24,7 +24,9 @@ app.use(express.json());
 const GAME_SERVER = 'http://localhost:' + (process.env.GAME_PORT || '3002');
 // 对外域名（可选）：localhost 与域名两条路都可用，任一可达即成功
 const SITE_URL = (process.env.SITE_URL || '').replace(/\/+$/, '');
-const gameBases = [...new Set([GAME_SERVER, SITE_URL].filter(Boolean))];
+// 游戏服开了 HTTPS（Origin 证书）时，本地 http://localhost:端口 握不上手，优先走 https 域名
+const SSL_ON = !!(process.env.SSL_CERT_PATH && process.env.SSL_KEY_PATH);
+const gameBases = [...new Set((SSL_ON ? [SITE_URL, GAME_SERVER] : [GAME_SERVER, SITE_URL]).filter(Boolean))];
 async function fetchGame(pathAndQuery, opts) {
   let lastErr;
   for (const base of gameBases) {

@@ -104,7 +104,7 @@ npm install
 
 ### 2. 配置环境变量
 
-编辑根目录下的 `.env` 文件：
+仓库不含 `.env`（已被 `.gitignore` 忽略）。在项目根目录**新建**一个 `.env` 文件，填入以下内容：
 
 ```env
 # 游戏服务器端口
@@ -129,9 +129,15 @@ ADMIN_KEY=your-secret-key
 TURNSTILE_SITE_KEY=your-site-key
 TURNSTILE_SECRET_KEY=your-secret-key
 
-# 站点对外访问地址（可选，如 https://chess.example.com，留空则仅 localhost）
+# 站点对外访问地址（可选，不带端口，如 https://chess.example.com，留空则仅 localhost）
 # 用户端通过域名或 localhost 均可访问；管理后台会同时尝试 localhost 与该地址连接游戏服
 SITE_URL=
+
+# Cloudflare Origin Certificate（可选）：配置后游戏服务器在 443 直接提供 HTTPS
+# 证书在 Cloudflare 控制台 SSL/TLS -> Origin Server 生成，存到项目根目录 certs/ 下（已被 gitignore）
+# 留空 = HTTP 启动，本地开发无需配置
+SSL_CERT_PATH=certs/origin.pem
+SSL_KEY_PATH=certs/origin.key
 ```
 
 > **注意**：`ADMIN_KEY` 必须在 `.env` 中配置且两边一致。若未配置，游戏服务器每次重启会生成随机密钥，导致管理后台认证失败。
@@ -153,8 +159,8 @@ node server.js
 ### 4. 访问网站
 
 - **配置指南**：双击项目根目录的 `Welcome.html` 查看（环境要求 / .env 字段说明 / 启动命令 / 常见问题）
-- 游戏平台：http://localhost:3002
-- 管理后台：http://localhost:3003
+- 本地开发：游戏平台 http://localhost:3002 ｜ 管理后台 http://localhost:3003
+- 公网部署：反向代理转发到 3002 后，**直接访问域名即可，无需加 `:3002`**（如 https://chess.example.com）；WebSocket 连接用 `location.host`，跟随当前域名与端口
 
 ### 前端路由
 
@@ -167,6 +173,17 @@ node server.js
 | `/login` | 登录/注册 |
 
 支持直接访问、刷新、浏览器前进/后退；未登录访问受保护路由会跳转登录页。服务端对非 `/api` 的 GET 请求回退返回 `index.html`（反向代理无需额外配置）。
+
+### HTTPS（可选：Cloudflare Origin Certificate）
+
+游戏服务器可直接用 Cloudflare Origin Certificate 在 443 提供 HTTPS，用户通过 `https://域名` 直接访问（**不带端口**）：
+
+1. Cloudflare 控制台 → SSL/TLS → Origin Server → Create Certificate，把 Origin Certificate 全文存为 `certs/origin.pem`、Private Key 全文存为 `certs/origin.key`（项目根目录，与 `.env` 同级）
+2. `.env` 填 `SSL_CERT_PATH=certs/origin.pem`、`SSL_KEY_PATH=certs/origin.key`，重启游戏服务器，日志出现 `[ssl] 已加载 Origin 证书` 即生效
+3. Cloudflare 后台 SSL/TLS 加密模式选 **Full (strict)**（Origin 证书只用于 Cloudflare ↔ 源站这一段）
+4. `SITE_URL` 填 `https://你的域名`，管理后台优先通过该地址连接游戏服
+
+未配置证书时自动回退 HTTP（本地开发无需配置）。证书与私钥已在 `.gitignore`（`certs/`、`*.pem`、`*.key`），**不要提交进 git**。
 
 ---
 
