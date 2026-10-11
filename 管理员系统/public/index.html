@@ -350,14 +350,15 @@ async function refreshGameLog() {
       data.games.map((g, idx) => {
         const time = new Date(g.time).toLocaleString('zh-CN');
         const gameName = gameTypeNames[g.gameType] || g.gameType;
+        const isDraw = (g.draw ?? false);
         return `<div style="padding:10px 14px;background:#16213e;border-radius:8px;margin-bottom:6px;border:1px solid #222;">
           <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="toggleGameDetail(${idx})">
-            <span style="font-weight:bold;">${g.winner} 胜</span>
+            <span style="font-weight:bold;">${isDraw ? '🤝 和棋' : g.winner + ' 胜'}</span>
             <span style="color:#888;font-size:12px;">[${gameName}]</span>
             <span style="color:#666;font-size:12px;">${time}</span>
             <span id="arrow-${idx}" style="color:#5c9ded;font-size:14px;transition:transform 0.3s;">▶</span>
           </div>
-          <div style="font-size:13px;color:#aaa;margin-top:4px;">${g.loser} 负 · ${g.totalMoves}手</div>
+          <div style="font-size:13px;color:#aaa;margin-top:4px;">${isDraw ? g.winner + ' 和 ' + g.loser : g.loser + ' 负'} · ${g.totalMoves}手</div>
           <div id="detail-${idx}" style="overflow:hidden;max-height:0;opacity:0;transition:max-height 0.4s cubic-bezier(0.4,0,0.2,1),opacity 0.3s ease,margin 0.3s;margin-top:0;padding:0 12px;background:#0d1b3e;border-radius:6px;">
           </div>
         </div>`;
@@ -454,6 +455,44 @@ function drawReplayBoard(idx, step) {
       ctx.strokeStyle = '#f44'; ctx.lineWidth = 2;
       ctx.strokeRect(33 + m.tc * 30 - 2, 33 + m.tr * 30 - 2, 24, 24);
     }
+  } else if (g.gameType === 'intl_chess') {
+    const cw = 36, ox = 20, oy = 20;
+    canvas.width = 8 * cw + ox * 2; canvas.height = 8 * cw + oy * 2;
+    ctx.fillStyle = '#b58863'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      ctx.fillStyle = (r + c) % 2 === 0 ? '#f0d9b5' : '#b58863';
+      ctx.fillRect(ox + c * cw, oy + r * cw, cw, cw);
+    }
+    const board = Array.from({ length: 8 }, () => Array(8).fill(''));
+    board[0] = ['r','n','b','q','k','b','n','r'];
+    board[1] = ['p','p','p','p','p','p','p','p'];
+    board[6] = ['P','P','P','P','P','P','P','P'];
+    board[7] = ['R','N','B','Q','K','B','N','R'];
+    const isPromo = sp => sp && ['q','r','b','n'].includes(String(sp).toLowerCase());
+    for (let i = 0; i < step && i < g.moves.length; i++) {
+      const m = g.moves[i];
+      if (m.fr === undefined) continue;
+      const p = board[m.fr][m.fc];
+      board[m.tr][m.tc] = p;
+      board[m.fr][m.fc] = '';
+      if (m.special === 'castle_short') { board[m.tr][m.tc - 1] = board[m.tr][m.tc + 1]; board[m.tr][m.tc + 1] = ''; }
+      else if (m.special === 'castle_long') { board[m.tr][m.tc + 1] = board[m.tr][m.tc - 2]; board[m.tr][m.tc - 2] = ''; }
+      else if (m.special === 'en_passant') board[m.fr][m.tc] = '';
+      if (p && isPromo(m.special)) board[m.tr][m.tc] = p === p.toUpperCase() ? String(m.special).toUpperCase() : String(m.special).toLowerCase();
+    }
+    const pieceChars = { K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙',k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟' };
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+      const p = board[r][c]; if (!p) continue;
+      ctx.font = 'bold ' + (cw * 0.65) + 'px serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = p === p.toUpperCase() ? '#fff' : '#000';
+      ctx.fillText(pieceChars[p] || '', ox + c * cw + cw / 2, oy + r * cw + cw / 2 + 2);
+    }
+    if (step > 0 && g.moves[step-1] && g.moves[step-1].tr !== undefined) {
+      const m = g.moves[step-1];
+      ctx.strokeStyle = 'rgba(220,60,30,0.85)'; ctx.lineWidth = 3;
+      ctx.strokeRect(ox + m.tc * cw + 2, oy + m.tr * cw + 2, cw - 4, cw - 4);
+    }
   } else {
     const totalSize = cellSize * (size - 1) + 56;
     canvas.width = canvas.height = totalSize;
@@ -465,10 +504,32 @@ function drawReplayBoard(idx, step) {
     }
     const board = initBoard(size);
     let lastR = -1, lastC = -1;
+    const dirs4 = [[1,0],[-1,0],[0,1],[0,-1]];
     for (let i = 0; i < step && i < g.moves.length; i++) {
       const m = g.moves[i];
       if (m.r !== undefined && m.c !== undefined) {
         board[m.r][m.c] = m.color;
+        // 围棋落子后模拟提子：移除无气的相邻对方棋块（五子棋不提子）
+        if (g.gameType === 'go') {
+          const opp = 3 - m.color;
+          for (const [dr, dc] of dirs4) {
+            const nr = m.r + dr, nc = m.c + dc;
+            if (nr < 0 || nr >= size || nc < 0 || nc >= size || board[nr][nc] !== opp) continue;
+            const grp = [[nr, nc]];
+            const seen = new Set([nr * size + nc]);
+            let liberty = false;
+            for (let k = 0; k < grp.length; k++) {
+              const [cr, cc] = grp[k];
+              for (const [dr2, dc2] of dirs4) {
+                const xr = cr + dr2, xc = cc + dc2;
+                if (xr < 0 || xr >= size || xc < 0 || xc >= size) continue;
+                if (board[xr][xc] === 0) liberty = true;
+                else if (board[xr][xc] === opp && !seen.has(xr * size + xc)) { seen.add(xr * size + xc); grp.push([xr, xc]); }
+              }
+            }
+            if (!liberty) for (const [gr, gc] of grp) board[gr][gc] = 0;
+          }
+        }
         lastR = m.r; lastC = m.c;
       }
     }
@@ -558,14 +619,25 @@ function formatMoves(moves, gameType) {
   return '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
     '<tr style="color:#888;border-bottom:1px solid #333;"><th style="padding:4px;text-align:left;">#</th><th style="padding:4px;text-align:left;">棋手</th><th style="padding:4px;text-align:left;">走法</th></tr>' +
     moves.map((m, i) => {
-      const color = m.color === 1 ? '黑' : '白';
-      const colorStyle = m.color === 1 ? 'color:#ddd;' : 'color:#f0c040;';
+      const isIntl = gameType === 'intl_chess';
+      const color = isIntl ? (m.color === 1 ? '白' : '黑') : (m.color === 1 ? '黑' : '白');
+      const colorStyle = color === '黑' ? 'color:#ddd;' : 'color:#f0c040;';
       let moveStr = '';
       if (gameType === 'gomoku' || gameType === 'go') {
         moveStr = `(${m.r},${m.c})`;
       } else if (gameType === 'chess') {
         const piece = m.captured ? pieceNames[m.captured] || m.captured : '';
         moveStr = `(${m.fr},${m.fc})→(${m.tr},${m.tc})${piece ? '吃' + piece : ''}`;
+      } else if (isIntl && m.fr !== undefined) {
+        if (m.special === 'castle_short') moveStr = 'O-O';
+        else if (m.special === 'castle_long') moveStr = 'O-O-O';
+        else {
+          const from = 'abcdefgh'[m.fc] + (8 - m.fr);
+          const to = 'abcdefgh'[m.tc] + (8 - m.tr);
+          const isCap = !!m.captured || m.special === 'en_passant';
+          moveStr = from + (isCap ? 'x' : '') + to;
+          if (m.special && ['q','r','b','n'].includes(String(m.special).toLowerCase())) moveStr += '=' + String(m.special).toUpperCase();
+        }
       }
       if (m.type === 'pass') moveStr = 'Pass';
       return `<tr style="border-bottom:1px solid #222;"><td style="padding:4px;color:#666;">${i + 1}</td><td style="padding:4px;${colorStyle}">${color}</td><td style="padding:4px;">${moveStr}</td></tr>`;

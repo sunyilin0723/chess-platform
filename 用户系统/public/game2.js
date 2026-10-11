@@ -4,8 +4,28 @@ let connectOptions = {};
 let backToLobbyCalled = false;
 let isSpectator = false;
 let joinDialogOpen = false;
+let graceTimer=null,graceLeft=0;
+
+function stopGraceCountdown(){if(graceTimer){clearInterval(graceTimer);graceTimer=null}}
+function startGraceCountdown(seconds,reason){
+  stopGraceCountdown();
+  graceLeft=seconds;
+  const text=reason||'对手断线';
+  const tick=()=>setStatus(`⏳ ${text}，${graceLeft} 秒内未返回将判负...`);
+  tick();
+  addChat(`${text}，${graceLeft} 秒内未返回将判负`,'msg-alert');
+  graceTimer=setInterval(()=>{
+    graceLeft--;
+    if(graceLeft<=0){stopGraceCountdown();setStatus(`⏳ ${text}，等待判负...`)}
+    else tick();
+  },1000);
+}
 
 function connect(roomId,mode,difficulty){
+  // 清掉旧连接和旧的重连定时器，避免开两条连接
+  if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
+  if(ws){ws.onclose=null;ws.onmessage=null;ws.close();ws=null;}
+  stopGraceCountdown();
   document.getElementById('chat-msgs').innerHTML='';
   connectOptions = {roomId, mode, difficulty, forbidden: selectedForbidden, spectator: false};
   reconnectAttempts = 0;
@@ -29,6 +49,9 @@ function doConnect(roomId, mode, difficulty, forbidden){
       ws.send(JSON.stringify({type:'pong'}));
       return;
     }
+    // 断线宽限期广播（带 graceSeconds）：倒计时提示，不当作终局
+    const graceMsg=typeof msg.graceSeconds==='number'&&msg.graceSeconds>0;
+    if(graceMsg)startGraceCountdown(msg.graceSeconds,msg.reason||'对手断线');
     // 服务器询问：对局还是观战
     if(msg.type==='join_ask'){
       // 人机对战模式：不弹窗，自动选择对局
@@ -55,6 +78,7 @@ function doConnect(roomId, mode, difficulty, forbidden){
       joinDialogOpen=false;
       // 观战模式
       if(msg.spectator){
+        const wasPlayer=connectOptions.reconnectWasPlayer; // 重连本应作为玩家却被转观战
         isSpectator=true;
         connectOptions.spectator=true;
         connectOptions.reconnectWasPlayer=false;
@@ -84,6 +108,10 @@ function doConnect(roomId, mode, difficulty, forbidden){
           setStatus('观战中 · 对局已结束');
         } else {
           setStatus('观战中 · 等待对局开始...');
+        }
+        if(wasPlayer){
+          setStatus('⚠ 重连时房间已满，你已被转为观战 · 点击「返回」可离开房间');
+          addChat('⚠ 重连时房间已满，你已被转为观战，点「返回」可离开房间','msg-alert');
         }
         return;
       }
@@ -115,7 +143,11 @@ function doConnect(roomId, mode, difficulty, forbidden){
       updatePlayersInfo();drawBoard();setStatus(isAI?'等待AI加入...':'等待对手加入...');
       if(!isAI) maybeAskNotification(); // PvP 对局请求系统通知权限（仅一次）
     }
-    if(msg.type==='error'){addChat('⚠ '+msg.msg,'msg-alert')}
+    if(msg.type==='error'){
+      addChat('⚠ '+msg.msg,'msg-alert');setStatus('⚠ '+msg.msg);
+      // 大厅视图下聊天框/状态栏不可见，弹窗提示
+      if(!document.getElementById('game-view').classList.contains('active'))alert('⚠ '+msg.msg);
+    }
     if(msg.type==='names'){playerNames=msg.names;updatePlayersInfo()}
     if(msg.type==='start'){
       turn=msg.turn;
@@ -188,8 +220,18 @@ function doConnect(roomId, mode, difficulty, forbidden){
       if(isSpectator)updateSpectatorTurnStatus();
       else updateTurnStatus();
     }
-    if(msg.type==='game_over'){
+    if(msg.type==='game_over'&&!graceMsg){
+      stopGraceCountdown();
+      if(typeof msg.winner!=='number'){
+        // 广播不带判负信息：不当作终局，不显示输赢
+        setStatus(msg.reason||'对局结束');addChat(msg.reason||'对局结束','msg-sys');
+        return;
+      }
       gameOver=true;
+      if(window.cancelPromotion)cancelPromotion(); // 终局时若开着升变弹窗则关掉，避免遮罩残留
+      // 关闭残留的悔棋/求和/先手选择等弹窗，避免遮罩盖住结算画面
+      ['choose-first','undo-dialog','draw-dialog'].forEach(id=>document.getElementById(id).classList.remove('show'));
+      document.getElementById('join-choice-dialog').style.display='none';joinDialogOpen=false;
       // 结算音效
       if(isSpectator){
         if(msg.winner===0) playDrawSound(); else playWinSound();
@@ -214,6 +256,7 @@ function doConnect(roomId, mode, difficulty, forbidden){
         }
       }
       drawBoard();
+      updateReturnGameNav();
     }
     if(msg.type==='undo_approved'){
       board=msg.board||board;turn=msg.turn;moveCount=msg.moveCount;lastMove=null;
@@ -228,6 +271,7 @@ function doConnect(roomId, mode, difficulty, forbidden){
     if(msg.type==='undo_rejected'&&!isSpectator){addChat('对手拒绝了悔棋请求','msg-sys')}
     if(msg.type==='draw_rejected'&&!isSpectator){addChat('对手拒绝了求和请求','msg-sys')}
     if(msg.type==='restart'){
+      stopGraceCountdown();
       board=msg.board||board;gameOver=false;turn=0;lastMove=null;moveCount=0;
       document.getElementById('chat-msgs').innerHTML='';
       document.getElementById('choose-first').classList.remove('show');
@@ -235,6 +279,7 @@ function doConnect(roomId, mode, difficulty, forbidden){
       if(isSpectator){setStatus('观战中 · 等待对局开始...')}
       else{setStatus('等待对手加入...')}
       addChat('新一局开始！','msg-sys');
+      updateReturnGameNav();
     }
     if(msg.type==='undo_request'&&!isSpectator){
       document.getElementById('undo-msg').textContent=msg.fromName+' 请求悔棋';
@@ -244,11 +289,12 @@ function doConnect(roomId, mode, difficulty, forbidden){
       document.getElementById('draw-msg').textContent=msg.fromName+' 请求和棋';
       document.getElementById('draw-dialog').classList.add('show');
     }
-    if(msg.type==='opponent_left'){
+    if(msg.type==='opponent_left'&&!graceMsg){
       if(isSpectator){setStatus('观战中 · 对手已离开');addChat('对手已离开房间','msg-sys');gameOver=true}
       else{setStatus('对手已离开');addChat('对手已离开房间','msg-sys');gameOver=true}
+      updateReturnGameNav();
     }
-    if(msg.type==='player_left'){
+    if(msg.type==='player_left'&&!graceMsg){
       const leftName=msg.color===1?playerNames[1]:playerNames[2];
       // 从本地 playerNames 中移除
       if(msg.color) delete playerNames[msg.color];
@@ -262,6 +308,7 @@ function doConnect(roomId, mode, difficulty, forbidden){
           gameOver=true;
         }
       }
+      updateReturnGameNav();
     }
     if(msg.type==='system_alert'){addChat(msg.text,'msg-alert');if(msg.banned){gameOver=true;setStatus('🚫 '+msg.text)}}
     if(msg.type==='new_notif'){onNewNotif();addChat('📩 '+msg.title+': '+msg.content,'msg-sys')}
@@ -269,6 +316,9 @@ function doConnect(roomId, mode, difficulty, forbidden){
     if(msg.type==='chat'){
       if(msg.color===3){
         addChat('👁 [观战] '+msg.name+': '+msg.text,'msg-spec');
+      } else if(msg.color!==1&&msg.color!==2){
+        // 系统消息（如 color:0 的「将军！」）不加玩家前缀
+        addChat(msg.text,'msg-sys');
       } else if(isSpectator){
         const who=msg.color===1?playerNames[1]||'黑方':playerNames[2]||'白方';
         addChat('('+who+') '+msg.text,msg.color===1?'msg-black':'msg-white');
@@ -305,6 +355,7 @@ function doConnect(roomId, mode, difficulty, forbidden){
       gameOver=true;
       setStatus('连接已断开');
     }
+    updateReturnGameNav();
   };
   ws.onerror=()=>{};
 }
@@ -331,6 +382,7 @@ function sendRestart(){if(isSpectator)return;if(ws&&ws.readyState===1)ws.send(JS
 function backToLobby(){
   backToLobbyCalled=true;
   if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
+  stopGraceCountdown();
   if(ws)ws.close();
   showView('lobby');
 }

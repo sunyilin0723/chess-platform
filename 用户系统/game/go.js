@@ -41,11 +41,27 @@ function goRemoveCaptures(board, r, c, color, size) {
 }
 
 function goCountTerritory(board, size) {
+  // 在副本上先清除明显死块（复用AI的死活判断：仅剩1口气即随时可被提），
+  // 否则未提净的死子会同时挡住周围围地，双方都少算目
+  const b = board.map(row => [...row]);
+  const seen = Array.from({ length: size }, () => Array(size).fill(false));
+  const deadCells = [];
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (b[r][c] === 0 || seen[r][c]) continue;
+      const color = b[r][c];
+      const { group } = getGoLiberties(b, r, c, size);
+      group.forEach(([gr, gc]) => { seen[gr][gc] = true; });
+      if (evaluateGroupLife(b, group, color, size) < 0) deadCells.push(...group);
+    }
+  }
+  deadCells.forEach(([dr, dc]) => { b[dr][dc] = 0; });
+
   const visited = Array.from({ length: size }, () => Array(size).fill(false));
   let blackScore = 0, whiteScore = 0;
   for (let r = 0; r < size; r++) {
     for (let c = 0; c < size; c++) {
-      if (board[r][c] !== 0 || visited[r][c]) continue;
+      if (b[r][c] !== 0 || visited[r][c]) continue;
       const region = []; const queue = [[r, c]]; visited[r][c] = true; let borderColors = new Set();
       while (queue.length) {
         const [cr, cc] = queue.shift(); region.push([cr, cc]);
@@ -53,7 +69,7 @@ function goCountTerritory(board, size) {
           const nr = cr + dr, nc = cc + dc;
           if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue;
           if (visited[nr][nc]) continue;
-          if (board[nr][nc] !== 0) { borderColors.add(board[nr][nc]); }
+          if (b[nr][nc] !== 0) { borderColors.add(b[nr][nc]); }
           else { visited[nr][nc] = true; queue.push([nr, nc]); }
         }
       }

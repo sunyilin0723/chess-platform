@@ -1,6 +1,8 @@
 // 获取主题颜色
 function getThemeColor(varName){return getComputedStyle(document.documentElement).getPropertyValue(varName).trim()}
 
+function sendMove(msg){if(ws&&ws.readyState===1)ws.send(JSON.stringify(msg))}
+
 function drawBoard(){
   if(gameType==='chess')drawChess();
   else if(gameType==='intl_chess')drawIntlChess();
@@ -154,7 +156,7 @@ function drawChess(){
     } else {
       const [fr,fc]=window._chessSelected;window._chessSelected=null;
       if(fr===r&&fc===c){drawBoard();return}
-      ws.send(JSON.stringify({type:'move',fr,fc,tr:r,tc:c}));
+      sendMove({type:'move',fr,fc,tr:r,tc:c});
     }
   }
   canvas.removeEventListener('click',window._chessClickBound);
@@ -203,10 +205,44 @@ window._intlChessClickBound=function(e){
   } else {
     const [fr,fc]=window._intlChessSelected;window._intlChessSelected=null;
     if(fr===r&&fc===c){drawBoard();return}
-    ws.send(JSON.stringify({type:'move',fr,fc,tr:r,tc:c}));
+    const src=board[fr]&&board[fr][fc];
+    // 兵走到底线：先弹升变选择，选完再带 special 发送
+    if((src==='P'&&r===0)||(src==='p'&&r===7)){openPromotionDialog(fr,fc,r,c,src==='P');return}
+    sendMove({type:'move',fr,fc,tr:r,tc:c});
   }
 };
 canvas.addEventListener('click',window._intlChessClickBound);
+
+// ==================== 国际象棋兵升变选择 ====================
+let _promoPending=null;
+window.openPromotionDialog=function(fr,fc,tr,tc,isWhite){
+  _promoPending={fr,fc,tr,tc};
+  const chars=isWhite?{q:'♕',r:'♖',b:'♗',n:'♘'}:{q:'♛',r:'♜',b:'♝',n:'♞'};
+  const names={q:'后',r:'车',b:'象',n:'马'};
+  const box=document.getElementById('promotion-choices');
+  box.innerHTML='';
+  ['q','r','b','n'].forEach(code=>{
+    const btn=document.createElement('button');
+    btn.innerHTML='<span style="font-size:30px;line-height:1.1">'+chars[code]+'</span><span style="display:block;font-size:12px;margin-top:2px">'+names[code]+'</span>';
+    btn.style.cssText='flex:1;min-width:0;padding:10px 0;border:1px solid var(--border-color);border-radius:10px;background:#f0d9b5;color:'+(isWhite?'#fff':'#111')+';cursor:pointer;transition:.15s;'+(isWhite?'text-shadow:0 1px 2px rgba(0,0,0,.85);':'');
+    btn.onmouseenter=function(){btn.style.borderColor='var(--accent-blue)';btn.style.transform='translateY(-2px)'};
+    btn.onmouseleave=function(){btn.style.borderColor='var(--border-color)';btn.style.transform='none'};
+    btn.onclick=function(){window.choosePromotion(code)};
+    box.appendChild(btn);
+  });
+  document.getElementById('promotion-dialog').style.display='flex';
+};
+window.choosePromotion=function(code){
+  if(!_promoPending)return;
+  const m=_promoPending;_promoPending=null;
+  document.getElementById('promotion-dialog').style.display='none';
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'move',fr:m.fr,fc:m.fc,tr:m.tr,tc:m.tc,special:code}));
+};
+window.cancelPromotion=function(){
+  _promoPending=null;
+  document.getElementById('promotion-dialog').style.display='none';
+  drawBoard();
+};
 canvas.addEventListener('click',e=>{
   if(isSpectator||gameOver||myColor!==turn||gameType==='chess'||gameType==='intl_chess')return;
   const rect=canvas.getBoundingClientRect();
@@ -218,13 +254,13 @@ canvas.addEventListener('click',e=>{
     const c=Math.round((mx-PAD)/cellW),r=Math.round((my-PAD)/cellW);
     if(r<0||r>=sz||c<0||c>=sz)return;
     if(board[r]&&board[r][c]!==0)return;
-    ws.send(JSON.stringify({type:'move',r,c}));
+    sendMove({type:'move',r,c});
   } else {
     const sz=boardSize;
     const c=Math.round((mx-PAD)/CELL),r=Math.round((my-PAD)/CELL);
     if(r<0||r>=sz||c<0||c>=sz)return;
     if(board[r]&&board[r][c]!==0)return;
-    ws.send(JSON.stringify({type:'move',r,c}));
+    sendMove({type:'move',r,c});
   }
 });
 canvas.addEventListener('mousemove',e=>{
@@ -248,13 +284,13 @@ function setupNotifs(){
       const el=document.getElementById('notif-list');
       if(!data.notifs.length){el.innerHTML='<div style="padding:20px;text-align:center;color:var(--text-muted)">暂无消息</div>';return}
       el.innerHTML=data.notifs.map(n=>`<div class="notif-item" style="${n.read?'opacity:0.6':''}">
-        <div style="font-size:13px;font-weight:bold;margin-bottom:3px">${n.title}</div>
+        <div style="font-size:13px;font-weight:bold;margin-bottom:3px">${escapeHtml(n.title)}</div>
         <div class="notif-content">${escapeHtml(n.content)}</div>
         <div class="notif-time">${new Date(n.time).toLocaleString('zh-CN')}</div>
       </div>`).join('');
     });
   };
-  window.onNewNotif=function(){const b=document.getElementById('notif-badge');const c=parseInt(b.textContent)||0;b.style.display='block';b.textContent=c+1};
+  window.onNewNotif=function(){const b=document.getElementById('notif-badge');const c=parseInt(b.textContent)||0;b.style.display='block';b.textContent=c+1;if(notifOpen)loadNotifs()};
 }
 setupNotifs();
 
@@ -276,10 +312,10 @@ window.loadDmInbox=function(){
     el.innerHTML=data.conversations.map(c=>{
       const time=new Date(c.lastTime).toLocaleString('zh-CN');
       const unreadBadge=c.unread>0?`<span class="notif-unread">${c.unread}</span>`:'';
-      return `<div onclick="openDmConversation('${c.username}')" class="notif-item" style="display:flex;justify-content:space-between;align-items:center">
+      return `<div onclick="openDmConversation(${escapeHtml(JSON.stringify(c.username))})" class="notif-item" style="display:flex;justify-content:space-between;align-items:center">
         <div style="overflow:hidden">
           <div style="font-size:13px;font-weight:bold;margin-bottom:3px">${escapeHtml(c.username)}${unreadBadge}</div>
-          <div class="dm-preview">${c.lastContent}</div>
+          <div class="dm-preview">${escapeHtml(c.lastContent)}</div>
         </div>
         <div style="font-size:11px;color:var(--text-muted);white-space:nowrap;margin-left:8px">${time}</div>
       </div>`;
@@ -391,7 +427,7 @@ setInterval(()=>{
 function selectReportType(btn){document.querySelectorAll('#report-type-btns button').forEach(b=>{b.classList.remove('selected');b.style.borderColor='#333';b.style.color='#ccc'});btn.classList.add('selected');btn.style.borderColor='#e74c3c';btn.style.color='#fff'}
 const reportTypeNames={boost:'刷胜率/放水',cheat:'使用外挂',abuse:'恶意行为',other:'其他'};
 function showReportDialog(){
-  const opp=playerNames[myColor===1?2:1];if(!opp)return;
+  const opp=playerNames[myColor===1?2:1];if(!opp){alert('对手尚未加入，暂无法举报');return}
   reportScreenshot='';document.getElementById('screenshot-preview').innerHTML='';document.getElementById('report-detail').value='';
   document.querySelectorAll('#report-type-btns button').forEach(b=>{b.classList.remove('selected');b.style.borderColor='#333';b.style.color='#ccc'});
   document.getElementById('report-dialog').classList.add('show');
@@ -433,7 +469,7 @@ function loadProfile(username){
       return `<div class="stat-box"><div class="stat-val" style="font-size:18px;">${r}</div><div style="font-size:11px;color:${ri.color};margin-top:2px;">${ri.icon} ${ri.name}</div><div class="stat-label">${label}</div></div>`;
     }).join('')}</div>
     ${u.reportCount>0?`<div class="profile-warn">⚠ 该用户被举报 ${u.reportCount} 次</div>`:''}
-    ${!isMe?`<button onclick="openDmConversation('${u.username}')" class="profile-btn-dm">📩 发送私信</button>`:''}
+    ${!isMe?`<button onclick="openDmConversation(${escapeHtml(JSON.stringify(u.username))})" class="profile-btn-dm">📩 发送私信</button>`:''}
     ${isMe?`
     <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;">
       <div onclick="toggleProfileSection('security')" style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:var(--bg-input);border-radius:10px;cursor:pointer;border:1px solid var(--border-color);">
@@ -553,7 +589,7 @@ function showGameDetail(idx){
           <table style="width:100%;border-collapse:collapse;">
             <tr style="color:var(--text-muted);border-bottom:1px solid var(--border-color);"><th style="padding:4px;text-align:left;">#</th><th style="padding:4px;text-align:left;">棋手</th><th style="padding:4px;text-align:left;">走法</th></tr>
             ${g.moves.map((m,i)=>{
-              const color = m.color===1?'黑':'白';
+              const color = g.gameType==='chess'?(m.color===1?'红':'黑'):g.gameType==='intl_chess'?(m.color===1?'白':'黑'):(m.color===1?'黑':'白');
               const colorStyle = m.color===1?'color:#ddd;':'color:var(--accent-yellow);';
               let moveStr = '';
               if(g.gameType==='gomoku'||g.gameType==='go') moveStr=`(${m.r},${m.c})`;
@@ -606,7 +642,18 @@ function drawReplayBoard(){
     board[6]=['P','P','P','P','P','P','P','P'];board[7]=['R','N','B','Q','K','B','N','R'];
     for(let i=0;i<step&&i<g.moves.length;i++){
       const m=g.moves[i];
-      if(m.fr!==undefined){const p=board[m.fr][m.fc];board[m.tr][m.tc]=p;board[m.fr][m.fc]='';}
+      if(m.fr!==undefined){
+        const p=board[m.fr][m.fc];board[m.tr][m.tc]=p;board[m.fr][m.fc]='';
+        const sp=m.special;
+        if(sp==='castle_short'||sp==='castle_long'){
+          const rr=m.tr,rf=sp==='castle_short'?7:0,rt=sp==='castle_short'?5:3;
+          board[rr][rt]=board[rr][rf];board[rr][rf]='';
+        }else if(sp==='en_passant'){
+          board[m.fr][m.tc]='';
+        }else if(typeof sp==='string'&&['q','r','b','n'].includes(sp.toLowerCase())){
+          board[m.tr][m.tc]=m.color===1?sp.toUpperCase():sp.toLowerCase();
+        }
+      }
     }
     const pieceChars={K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙',k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'};
     for(let r=0;r<8;r++)for(let c=0;c<8;c++){
@@ -655,8 +702,21 @@ function drawReplayBoard(){
     ctx.strokeStyle='#6b5230';ctx.lineWidth=1;
     for(let i=0;i<sz;i++){ctx.beginPath();ctx.moveTo(28,28+i*cellW);ctx.lineTo(28+(sz-1)*cellW,28+i*cellW);ctx.stroke();ctx.beginPath();ctx.moveTo(28+i*cellW,28);ctx.lineTo(28+i*cellW,28+(sz-1)*cellW);ctx.stroke()}
     const board=Array.from({length:sz},()=>Array(sz).fill(0));let lastR=-1,lastC=-1;
+    // 围棋回放：落子后提掉无气的对方棋子
+    const goRemoveDead=(r,c)=>{
+      const opp=board[r][c]===1?2:1,dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+      const flood=(sr,sc)=>{
+        const grp=[],seen=new Set(),st=[[sr,sc]];let lib=false;
+        while(st.length){const[cr,cc]=st.pop(),k=cr+','+cc;if(seen.has(k))continue;seen.add(k);grp.push([cr,cc]);
+          for(const[dr,dc]of dirs){const nr=cr+dr,nc=cc+dc;if(nr<0||nc<0||nr>=sz||nc>=sz)continue;const v=board[nr][nc];
+            if(v===0)lib=true;else if(v===opp&&!seen.has(nr+','+nc))st.push([nr,nc]);}}
+        return[grp,lib];
+      };
+      for(const[dr,dc]of dirs){const nr=r+dr,nc=c+dc;if(nr<0||nc<0||nr>=sz||nc>=sz)continue;
+        if(board[nr][nc]===opp){const[grp,lib]=flood(nr,nc);if(!lib)for(const[gr,gc]of grp)board[gr][gc]=0;}}
+    };
     for(let i=0;i<step&&i<g.moves.length;i++){
-      const m=g.moves[i];if(m.r!==undefined&&m.c!==undefined){board[m.r][m.c]=m.color;lastR=m.r;lastC=m.c;}
+      const m=g.moves[i];if(m.r!==undefined&&m.c!==undefined){board[m.r][m.c]=m.color;if(g.gameType==='go')goRemoveDead(m.r,m.c);lastR=m.r;lastC=m.c;}
     }
     const stoneR=cellW*0.43;
     for(let r=0;r<sz;r++)for(let c=0;c<sz;c++){
@@ -697,52 +757,11 @@ async function deleteAccount(){
   alert('账号已注销');token='';currentUser='';localStorage.removeItem('gomoku_token');localStorage.removeItem('gomoku_user');showView('auth');
   }catch(e){alert(e.message)}
 }
-async function loadMyReports(){
-  const el=document.getElementById('my-reports-list');
-  if(!el)return;
-  try{
-    const data=await apiFetch('/api/profile/'+encodeURIComponent(currentUser));
-    const reports=data.reports||[];
-    const appeals=await apiFetch('/api/appeal/mine');
-    const appealedIds=new Set(appeals.map(a=>a.reportId));
-    if(!reports.length){el.innerHTML='<div style="text-align:center;padding:10px;color:var(--text-muted)">暂无举报记录</div>';return}
-    let html='<div class="dm-section-title">针对您的举报</div>';
-    reports.forEach(r=>{
-      const t=new Date(r.time).toLocaleString('zh-CN');
-      const st={pending:'待审核',approved:'确认违规',rejected:'已驳回',cancelled:'已撤回'}[r.status]||r.status;
-      const sc={pending:'var(--accent-yellow)',approved:'var(--accent-red)',rejected:'var(--text-muted)',cancelled:'var(--text-muted)'}[r.status]||'var(--text-muted)';
-      const appealed=appealedIds.has(r.id);
-      html+=`<div style="padding:8px 12px;background:var(--bg-input);border-radius:6px;margin-bottom:6px;font-size:13px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-          <span style="color:${sc}">[${st}]</span>
-          <span style="color:var(--text-muted);font-size:11px">${t}</span>
-        </div>
-        <div class="appeal-reason">${r.reasonType==='boost'?'刷胜率/放水':r.reasonType==='cheat'?'使用外挂':r.reasonType==='abuse'?'恶意行为':'其他'} ${r.adminMark?'(管理员标记)':''}</div>
-        ${r.status==='approved'&&!appealed?`<button onclick="appealReport('${r.id}')" style="padding:3px 10px;font-size:12px;border:1px solid var(--accent-blue);border-radius:4px;background:transparent;color:var(--accent-blue);cursor:pointer">申诉</button>`:''}
-        ${appealed?`<span style="color:var(--text-muted);font-size:11px">已申诉</span>`:''}
-      </div>`;
-    });
-    el.innerHTML=html;
-  }catch{el.innerHTML='<p style="color:var(--text-muted)">加载失败</p>'}
-}
 async function appealReport(reportId){
   const reason=prompt('请填写申诉理由：');
   if(!reason)return;
-  try{await apiFetch('/api/appeal',{method:'POST',body:JSON.stringify({reportId,reason})});alert('申诉已提交');loadMyReports()}catch(e){alert(e.message)}
+  try{await apiFetch('/api/appeal',{method:'POST',body:JSON.stringify({reportId,reason})});alert('申诉已提交')}catch(e){alert(e.message)}
 }
-async function cancelReport(id){try{await apiFetch('/api/report/cancel',{method:'POST',body:JSON.stringify({reportId:id})});loadMyReports()}catch(e){alert(e.message)}}
-async function loadAppealHistory(){
-  const el=document.getElementById('appeal-history');if(!el)return;
-  try{const list=await apiFetch('/api/appeal/mine');
-  if(!list.length){el.innerHTML='';return}
-  const st={pending:'审核中',approved:'申诉成功（已解封）',rejected:'申诉被驳回（封号+3天）'};
-  const sc={pending:'#f0c040',approved:'#2ecc71',rejected:'#e74c3c'};
-  el.innerHTML=list.map(a=>`<div style="padding:6px 10px;background:#16213e;border-radius:4px;margin-bottom:6px;font-size:12px">
-    <span style="color:${sc[a.status]||'#888'}">[${st[a.status]||a.status}]</span>
-    ${escapeHtml(a.reason.substring(0,40))}${a.reason.length>40?'...':''}
-    <span style="float:right;color:#666">${new Date(a.time).toLocaleDateString('zh-CN')}</span>
-  </div>`).join('')}catch{}}
-if(document.getElementById('appeal-history'))loadAppealHistory();
 const LB_GAME_NAMES={gomoku:'五子棋',go:'围棋',chess:'中国象棋',intl_chess:'国际象棋'};
 const LB_GAMES=['gomoku','go','chess','intl_chess'];
 let lbCurrentGame='gomoku';

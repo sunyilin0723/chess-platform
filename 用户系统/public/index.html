@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>在线棋类对战</title>
-<link rel="stylesheet" href="style.css?v=13">
+<link rel="stylesheet" href="style.css?v=14">
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body>
@@ -232,6 +232,16 @@
   </div>
 </div>
 
+<!-- 国际象棋兵升变选择弹窗 -->
+<div id="promotion-dialog" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:260;justify-content:center;align-items:center">
+  <div style="background:var(--bg-card);border-radius:12px;padding:24px 28px;text-align:center;width:360px;max-width:92vw;">
+    <h3 style="font-size:18px;margin-bottom:6px;">♟ 兵升变</h3>
+    <p style="color:var(--text-muted);font-size:14px;margin-bottom:18px;">选择要升变的棋子</p>
+    <div id="promotion-choices" style="display:flex;gap:8px;justify-content:center;"></div>
+    <button onclick="cancelPromotion()" style="margin-top:16px;padding:8px 26px;font-size:14px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-input);color:var(--text-secondary);cursor:pointer;">取消</button>
+  </div>
+</div>
+
 <!-- 反馈弹窗 -->
 <div id="feedback-dialog" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:300;justify-content:center;align-items:center">
   <div style="background:var(--bg-card);border-radius:12px;padding:28px 32px;width:420px;max-width:92vw;">
@@ -289,7 +299,7 @@
 </div>
 
 <script src="game.js?v=14"></script>
-<script src="game2.js?v=15"></script>
-<script src="game3.js?v=15"></script>
+<script src="game2.js?v=16"></script>
+<script src="game3.js?v=16"></script>
 </body>
 </html>

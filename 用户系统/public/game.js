@@ -18,7 +18,8 @@ function escapeHtml(str){
 let _turnstileSiteKey=null,_turnstileWidgets={};
 async function getTurnstileSiteKey(){
   if(_turnstileSiteKey!==null)return _turnstileSiteKey;
-  try{const r=await fetch('/api/turnstile-key');const j=await r.json();_turnstileSiteKey=j.siteKey||''}catch{_turnstileSiteKey=''}
+  // 失败不缓存（保持 null），下次调用重试
+  try{const r=await fetch('/api/turnstile-key');const j=await r.json();if(j.siteKey)_turnstileSiteKey=j.siteKey}catch{}
   return _turnstileSiteKey;
 }
 // 等待 turnstile 脚本加载（async defer，可能未就绪）
@@ -65,6 +66,15 @@ document.addEventListener('DOMContentLoaded',()=>{
   initGameSlider();
   // 默认选中五子棋，显示禁手选项
   selectGame('gomoku',document.querySelector('.game-slider-item.selected'));
+  // 动态插入「返回对局」导航入口（对局存活时显示）
+  const nl=document.getElementById('nav-links');
+  if(nl&&!document.getElementById('nav-return-game')){
+    const s=document.createElement('span');
+    s.id='nav-return-game';s.textContent='↩ 返回对局';
+    s.style.cursor='pointer';s.style.display='none';
+    s.onclick=()=>showView('game');
+    nl.insertBefore(s,nl.firstChild);
+  }
 });
 
 // ==================== 前端路由 ====================
@@ -75,10 +85,16 @@ let _routing = false; // popstate 导航时禁止再 pushState
 function pathForView(name) {
   return VIEW_PATHS[name] || '/home';
 }
+// 对局是否存活（连接中/已连接/等待重连且未结束）
+function gameAlive(){
+  if(backToLobbyCalled||gameOver)return false;
+  return (!!ws&&ws.readyState<=1)||!!reconnectTimer;
+}
 function viewForPath(p) {
   if (PATH_VIEWS[p]) return PATH_VIEWS[p];
   if (p.startsWith('/profile')) return 'profile';
-  // 含 /game 及未知路径：对局不可从 URL 还原，回大厅
+  if (p.startsWith('/game')) return gameAlive() ? 'game' : 'lobby';
+  // 未知路径：回大厅
   return 'lobby';
 }
 function syncUrl(name) {
@@ -90,6 +106,13 @@ window.addEventListener('popstate', () => {
   _routing = true;
   showView(viewForPath(location.pathname));
 });
+
+let _view='auth';
+// 对局存活时在导航栏显示「返回对局」入口
+function updateReturnGameNav(){
+  const el=document.getElementById('nav-return-game');
+  if(el)el.style.display=(gameAlive()&&_view!=='game')?'':'none';
+}
 
 function showView(name){
   // 关闭移动端菜单
@@ -129,6 +152,8 @@ function showView(name){
   else{nav.classList.add('show');document.getElementById('nav-username').textContent=currentUser}
   if(name==='profile')loadProfile(currentUser);
   if(name==='leaderboard')loadLeaderboard();
+  _view=name;
+  updateReturnGameNav();
   syncUrl(name);
 }
 function switchTab(t){

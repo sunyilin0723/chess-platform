@@ -160,35 +160,24 @@ function isOverline(board, r, c, color, size) {
 function isForbiddenMove(board, r, c, color) {
   if (color !== 1) return false; // 禁手只针对黑棋
 
-  board[r][c] = color;
+  // 在副本上判断，避免污染传入的真实棋盘
+  const b = board.map(row => [...row]);
+  b[r][c] = color;
 
   // 长连优先判定（6+连不构成五连胜利，是禁手）
-  if (isOverline(board, r, c, color, 15)) {
-    board[r][c] = 0;
-    return { forbidden: true, type: '长连禁手' };
-  }
+  if (isOverline(b, r, c, color, 15)) return { forbidden: true, type: '长连禁手' };
 
   // 恰好五连不算禁手（五连优先）
-  if (checkGomokuWin(board, r, c, color)) {
-    board[r][c] = 0;
-    return false;
-  }
+  if (checkGomokuWin(b, r, c, color)) return false;
 
   // 四四禁手
-  const fourCount = isFour(board, r, c, color, 15);
-  if (fourCount >= 2) {
-    board[r][c] = 0;
-    return { forbidden: true, type: '四四禁手' };
-  }
+  const fourCount = isFour(b, r, c, color, 15);
+  if (fourCount >= 2) return { forbidden: true, type: '四四禁手' };
 
   // 三三禁手
-  const threeCount = isOpenThree(board, r, c, color, 15);
-  if (threeCount >= 2) {
-    board[r][c] = 0;
-    return { forbidden: true, type: '三三禁手' };
-  }
+  const threeCount = isOpenThree(b, r, c, color, 15);
+  if (threeCount >= 2) return { forbidden: true, type: '三三禁手' };
 
-  board[r][c] = 0;
   return false;
 }
 
@@ -279,7 +268,7 @@ function getCandidateMoves(board, size) {
       }
     }
   }
-  if (candidates.size === 0) candidates.add(7 * size + 7);
+  if (candidates.size === 0 && board[7][7] === 0) candidates.add(7 * size + 7); // 满盘时不注入已占点
   return [...candidates].map(pos => [Math.floor(pos / size), pos % size]);
 }
 
@@ -352,7 +341,9 @@ function getAIMove(board, aiColor, difficulty, size, forbiddenRule) {
     const randomFactor = difficulty === 'easy' ? (Math.random() * 40 - 20) : 0;
     if (score + randomFactor > bestScore) { bestScore = score + randomFactor; bestMove = [r, c]; }
   }
-  return bestMove || [7, 7];
+  if (bestMove) return bestMove;
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (board[r][c] === 0) return [r, c];
+  return null; // 满盘无空点，调用方以 if (aiMove) 判空
 }
 
 module.exports = { createGomokuBoard, checkGomokuWin, getAIMove, isForbiddenMove };

@@ -23,6 +23,14 @@ const mongoose = require('mongoose');
 
 const app = express();
 
+// async 路由统一兜底：未自带 try 的 async 处理器抛错时返回 5xx 而非挂起
+const asyncRoute = (fn) => (req, res, next) => { Promise.resolve().then(() => fn(req, res, next)).catch(next); };
+const wrapAsyncRoutes = (orig) => function (p, ...hs) {
+  return orig.call(this, p, ...hs.map(h => (h && h.constructor && h.constructor.name === 'AsyncFunction') ? asyncRoute(h) : h));
+};
+app.get = wrapAsyncRoutes(app.get.bind(app));
+app.post = wrapAsyncRoutes(app.post.bind(app));
+
 // HTTPS（可选）：配置了 Cloudflare Origin Certificate 时用 TLS 提供服务，否则回退 HTTP
 // SSL_CERT_PATH / SSL_KEY_PATH 相对路径以项目根目录（.env 所在目录）为基准
 const resolveEnvPath = (p) => (path.isAbsolute(p) ? p : path.join(__dirname, '..', p));
@@ -97,6 +105,8 @@ function createRoom(roomId, gameType, timerSeconds, mode, difficulty, forbidden)
     forbidden: forbidden || false,
     intlLastMove: null,
     keyBeforeLast: null, // 简单劫：上一手落子前的棋盘指纹
+    ply: 0, // 局面代数：悔棋/重开时自增，用于作废挂起的 AI 回调
+    graceTimer: null, // PvP 断线宽限期计时器
   };
 }
 
@@ -139,14 +149,71 @@ function startTimer(room) {
       const winner = idx === 0 ? 2 : 1;
       const wName = room.names[winner], lName = room.names[idx + 1];
       broadcast(room, { type: 'game_over', winner, reason: '超时', winnerName: wName, loserName: lName });
-      if (wName && lName && wName !== lName) recordGame(wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), room.gameType);
+      if (wName && lName && wName !== lName) recordGame(wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), room.gameType);
       cleanupRoom(room);
     }
   }, 1000);
 }
 
 function stopTimer(room) { if (room.timerInterval) { clearInterval(room.timerInterval); room.timerInterval = null; } }
-function cleanupRoom(room) { stopTimer(room); }
+function cleanupRoom(room) {
+  stopTimer(room);
+  room.pendingUndo = null; room.pendingDraw = null;
+  if (room.graceTimer) { clearTimeout(room.graceTimer); room.graceTimer = null; }
+  if (room.players.some(p => p.grace)) {
+    room.players.filter(p => p.grace).forEach(g => { delete room.names[g.color]; delete room.tokens[g.color]; });
+    room.players = room.players.filter(p => !p.grace);
+  }
+}
+
+// 断线宽限期超时：移除断线座位并结算判负
+function finishLeave(room) {
+  room.graceTimer = null;
+  const ghosts = room.players.filter(p => p.grace);
+  for (const g of ghosts) {
+    const lName = room.names[g.color];
+    room.players = room.players.filter(p => p !== g);
+    delete room.names[g.color]; delete room.tokens[g.color];
+    if (!room.gameOver) {
+      room.gameOver = true; stopTimer(room);
+      const winner = g.color === 1 ? 2 : 1;
+      const wName = room.names[winner];
+      broadcast(room, { type: 'game_over', winner, reason: '对手离开', winnerName: wName, loserName: lName || '对手' });
+      if (wName && lName && wName !== lName) recordGame(wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), room.gameType);
+    }
+    broadcast(room, { type: 'player_left', color: g.color });
+  }
+  if (room.players.length === 0) { cleanupRoom(room); rooms.delete(room.id); }
+  else if (room.gameOver) resetForNewGame(room);
+}
+
+// 终局/有人离开后重置房间为等待新对局
+function resetForNewGame(room) {
+  room.gameOver = false;
+  room.started = false;
+  room.choosing = false;
+  room.turn = 1;
+  room.moveCount = 0;
+  room.moveHistory = [];
+  room.undoCount = [0, 0];
+  room.drawCount = [0, 0];
+  room.pendingUndo = null;
+  room.pendingDraw = null;
+  room.passCount = 0;
+  room.lastMove = null;
+  room.intlLastMove = null;
+  room.goCaptures = [0, 0];
+  room.keyBeforeLast = null;
+  room.timeLeft = [room.timerSeconds, room.timerSeconds];
+  const gt = room.gameType;
+  if (gt === 'chess') room.board = createChessBoard();
+  else if (gt === 'intl_chess') room.board = createIntlChessBoard();
+  else if (gt === 'go') room.board = createGoBoard(room.size);
+  else room.board = createGomokuBoard(room.size);
+  room.ply++;
+  broadcast(room, { type: 'names', names: room.names, gameType: room.gameType });
+  broadcast(room, { type: 'restart', board: room.board });
+}
 
 // 观战者加入房间
 function joinAsSpectator(ws, room, name) {
@@ -176,14 +243,15 @@ function resetRoomState(room) {
   room.goCaptures = [0, 0];
   room.keyBeforeLast = null;
   room.timeLeft = [room.timerSeconds || 0, room.timerSeconds || 0];
+  room.ply++;
 }
 
 // 玩家加入房间（对局）
 function joinAsPlayer(ws, room, name, token) {
   // 同一连接重复 join：先移除旧条目，避免一人控制双方
   room.players = room.players.filter(p => p.ws !== ws);
-  // 清理断线死连接（保留 AI 条目 ws:null）
-  room.players = room.players.filter(p => p.isAI || (p.ws && p.ws.readyState === 1));
+  // 清理断线死连接（保留 AI 条目 ws:null 与断线宽限座位）
+  room.players = room.players.filter(p => p.isAI || p.grace || (p.ws && p.ws.readyState === 1));
   const aliveColors = room.players.map(p => p.color);
   if (!aliveColors.includes(1)) { delete room.names[1]; delete room.tokens[1]; }
   if (!aliveColors.includes(2)) { delete room.names[2]; delete room.tokens[2]; }
@@ -197,6 +265,10 @@ function joinAsPlayer(ws, room, name, token) {
       broadcast(room, { type: 'names', names: room.names, gameType: room.gameType });
     }
   }
+
+  // 同一账号已是本房任一玩家时不允许再占另一位（转观战）
+  const dupColor = [1, 2].find(cl => room.names[cl] && (room.names[cl] === name || (token && room.tokens[cl] === token)));
+  if (dupColor) { joinAsSpectator(ws, room, name); return; }
 
   if (room.players.length >= 2) {
     joinAsSpectator(ws, room, name);
@@ -476,6 +548,10 @@ app.post('/api/change-username', authMiddleware, async (req, res) => {
   await DM.updateMany({ from: req.username }, { from: newUsername });
   await DM.updateMany({ to: req.username }, { to: newUsername });
   await Appeal.updateMany({ username: req.username }, { username: newUsername });
+  await GameLog.updateMany({ winner: req.username }, { winner: newUsername });
+  await GameLog.updateMany({ loser: req.username }, { loser: newUsername });
+  await ChatLog.updateMany({ username: req.username }, { username: newUsername });
+  await Feedback.updateMany({ from: req.username }, { from: newUsername });
   const newToken = genToken();
   await Token.deleteOne({ token: req.headers.authorization.replace('Bearer ', '') });
   await Token.create({ token: newToken, username: newUsername });
@@ -581,10 +657,13 @@ app.post('/api/notifs/read', authMiddleware, async (req, res) => {
 app.post('/api/dm/send', authMiddleware, async (req, res) => {
   const { to, content } = req.body || {};
   if (!to || !content || !content.trim()) return res.status(400).json({ error: '缺少收件人或内容' });
+  if (isMuted(req.username)) return res.status(403).json({ error: '你已被临时禁言，请稍后再试' });
   if (to === req.username) return res.status(400).json({ error: '不能给自己发私信' });
   const target = await User.findOne({ username: to });
   if (!target) return res.status(400).json({ error: '收件人不存在' });
-  const filteredContent = filterSensitive(content.trim());
+  const trimmed = content.trim();
+  const filteredContent = filterSensitive(trimmed);
+  if (filteredContent !== trimmed) addViolation(req.username);
   await DM.create({ id: genId(), from: req.username, to, content: filteredContent.substring(0, 500), read: false, time: new Date().toISOString() });
   res.json({ ok: true });
 });
@@ -622,8 +701,11 @@ app.get('/api/dm/unread', authMiddleware, async (req, res) => {
 app.post('/api/feedback', authMiddleware, async (req, res) => {
   const { content } = req.body || {};
   if (!content || !content.trim()) return res.status(400).json({ error: '请输入反馈内容' });
+  if (isMuted(req.username)) return res.status(403).json({ error: '你已被临时禁言，请稍后再试' });
   if (!(await verifyTurnstile(req.body.turnstileToken))) return res.status(400).json({ error: '人机验证失败，请重试' });
-  const filteredContent = filterSensitive(content.trim());
+  const trimmed = content.trim();
+  const filteredContent = filterSensitive(trimmed);
+  if (filteredContent !== trimmed) addViolation(req.username);
   await Feedback.create({ id: genId(), from: req.username, content: filteredContent.substring(0, 1000), time: new Date().toISOString() });
   res.json({ ok: true });
 });
@@ -674,17 +756,38 @@ wss.on('connection', (ws) => {
           return;
         }
 
+        const gameType = ['gomoku', 'go', 'chess', 'intl_chess'].includes(msg.gameType) ? msg.gameType : 'gomoku';
+        let timerSeconds = Math.floor(Number(msg.timerSeconds));
+        if (!Number.isFinite(timerSeconds) || timerSeconds < 0 || (timerSeconds > 0 && (timerSeconds < 10 || timerSeconds > 3600))) timerSeconds = 0;
+
         let room = rooms.get(roomId);
         const isNewRoom = !room;
-        if (isNewRoom) room = createRoom(roomId, msg.gameType, msg.timerSeconds, msg.mode, msg.difficulty, msg.forbidden);
+        if (isNewRoom) room = createRoom(roomId, gameType, timerSeconds, msg.mode, msg.difficulty, msg.forbidden);
 
-        // 清理断线的死连接后再判断房间人数
+        // 清理断线的死连接后再判断房间人数（保留 AI 与断线宽限座位）
         if (!isNewRoom) {
-          room.players = room.players.filter(p => p.ws && p.ws.readyState === 1);
+          room.players = room.players.filter(p => p.isAI || p.grace || (p.ws && p.ws.readyState === 1));
           if (room.spectators) room.spectators = room.spectators.filter(s => s.ws && s.ws.readyState === 1);
           const aliveColors = room.players.map(p => p.color);
           if (!aliveColors.includes(1)) { delete room.names[1]; delete room.tokens[1]; }
           if (!aliveColors.includes(2)) { delete room.names[2]; delete room.tokens[2]; }
+        }
+
+        // 断线宽限期内本尊重连：恢复座位、取消判负计时
+        if (!isNewRoom && msg.autoMode !== 'spectate' && room.graceTimer) {
+          const seat = room.players.find(pp => pp.grace && room.names[pp.color] === name);
+          if (seat) {
+            seat.grace = false; seat.ws = ws;
+            if (msg.token) room.tokens[seat.color] = msg.token;
+            ws.send(JSON.stringify({ type: 'joined', color: seat.color, room: room.id, names: room.names, gameType: room.gameType, size: room.size, timerSeconds: room.timerSeconds, board: room.board, mode: room.mode, difficulty: room.difficulty, turn: room.turn, started: room.started }));
+            broadcast(room, { type: 'game_over', reason: '对局继续' });
+            ws.send(JSON.stringify({ type: 'start', turn: room.turn }));
+            if (!room.players.some(pp => pp.grace)) {
+              clearTimeout(room.graceTimer); room.graceTimer = null;
+              startTimer(room);
+            }
+            return;
+          }
         }
 
         // 人机对战：个人房间，直接加入对局，不询问
@@ -701,7 +804,7 @@ wss.on('connection', (ws) => {
           rooms.set(roomId, room);
           joinAsSpectator(ws, room, name);
         } else if (isNewRoom || !roomFull) {
-          ws._pendingJoin = { roomId, name, gameType: msg.gameType, timerSeconds: msg.timerSeconds, mode: msg.mode, difficulty: msg.difficulty, forbidden: msg.forbidden, token: msg.token, isNewRoom };
+          ws._pendingJoin = { roomId, name, gameType, timerSeconds, mode: msg.mode, difficulty: msg.difficulty, forbidden: msg.forbidden, token: msg.token, isNewRoom };
           ws.send(JSON.stringify({ type: 'join_ask', occupied: room.players.length, isNewRoom }));
         } else {
           rooms.set(roomId, room);
@@ -727,7 +830,10 @@ wss.on('connection', (ws) => {
     if (msg.type === 'choose_first') {
       const room = findRoomByWs(ws);
       if (!room || !room.choosing) return;
-      if (getPlayerColor(room, ws) !== 1) return;
+      const chooseColor = getPlayerColor(room, ws);
+      if (chooseColor !== 1 && chooseColor !== 2) return;
+      // PvP 由座位1选择；PvE 由入座的人类玩家选择（重开后其座位可能是2）
+      if (room.mode !== 'pve' && chooseColor !== 1) return;
       room.choosing = false;
       if (msg.swap) {
         const p1 = room.players.find(p => p.color === 1);
@@ -748,8 +854,9 @@ wss.on('connection', (ws) => {
       startTimer(room);
       // 五子棋AI先手
       if (room.mode === 'pve' && room.aiColor === 1 && room.gameType === 'gomoku') {
+        const gen = room.ply;
         setTimeout(() => {
-          if (room.gameOver) return;
+          if (room.gameOver || room.ply !== gen || room.turn !== room.aiColor) return;
           const aiMove = gomokuAI(room.board, room.aiColor, room.difficulty, room.size, room.forbidden);
           if (aiMove) {
             const [aiR, aiC] = aiMove;
@@ -784,8 +891,9 @@ wss.on('connection', (ws) => {
       }
       // 象棋AI先手
       if (room.mode === 'pve' && room.aiColor === 1 && room.gameType === 'chess') {
+        const gen = room.ply;
         setTimeout(() => {
-          if (room.gameOver) return;
+          if (room.gameOver || room.ply !== gen || room.turn !== room.aiColor) return;
           const aiMove = chessAI(room.board, room.aiColor, room.difficulty);
           if (aiMove) {
             const [aiFr, aiFc, aiTr, aiTc] = aiMove;
@@ -801,15 +909,17 @@ wss.on('connection', (ws) => {
       }
       // 国际象棋AI先手
       if (room.mode === 'pve' && room.aiColor === 1 && room.gameType === 'intl_chess') {
+        const gen = room.ply;
         setTimeout(() => {
-          if (room.gameOver) return;
+          if (room.gameOver || room.ply !== gen || room.turn !== room.aiColor) return;
           const aiMove = intlGetAIMove(room.board, room.difficulty, room.intlLastMove, room.aiColor);
           if (aiMove) {
             const { fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial } = aiMove;
             const aiSaved = room.board.map(row => [...row]);
+            const aiPrevIntl = room.intlLastMove;
             const { captured: aiCaptured, newLastMove: aiLastMove } = makeIntlMove(room.board, aiFr, aiFc, aiTr, aiTc, aiSpecial, room.intlLastMove);
             room.intlLastMove = aiLastMove;
-            room.moveHistory.push({ type: 'move', fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial, color: room.aiColor, captured: aiCaptured, board: aiSaved });
+            room.moveHistory.push({ type: 'move', fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial, color: room.aiColor, captured: aiCaptured, board: aiSaved, prevIntl: aiPrevIntl });
             room.lastMove = [aiTr, aiTc]; room.moveCount++;
             room.turn = room.aiColor === 1 ? 2 : 1;
             broadcast(room, { type: 'move', fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial, color: room.aiColor, turn: room.turn, captured: aiCaptured, lastMove: [aiTr, aiTc], board: room.board });
@@ -818,8 +928,9 @@ wss.on('connection', (ws) => {
       }
       // 围棋AI先手
       if (room.mode === 'pve' && room.aiColor === 1 && room.gameType === 'go') {
+        const gen = room.ply;
         setTimeout(() => {
-          if (room.gameOver) return;
+          if (room.gameOver || room.ply !== gen || room.turn !== room.aiColor) return;
           const aiMove = goAI(room.board, room.aiColor, room.difficulty, room.size);
           if (aiMove) {
             const [aiR, aiC] = aiMove;
@@ -848,6 +959,7 @@ wss.on('connection', (ws) => {
       const currentRoom = findRoomByWs(ws);
       if (!currentRoom || currentRoom.gameOver) return;
       if (!currentRoom.started || currentRoom.choosing) return;
+      if (currentRoom.players.some(p => p.grace)) return; // 断线宽限期内对局暂停
       const myColor = getPlayerColor(currentRoom, ws);
       if (currentRoom.turn !== myColor) return;
 
@@ -886,9 +998,16 @@ wss.on('connection', (ws) => {
             console.log('五子棋跳过recordGame:', { wName, lName });
           }
           cleanupRoom(currentRoom);
+        } else if (currentRoom.moveCount >= currentRoom.size * currentRoom.size) {
+          // 满盘无五连：和棋
+          currentRoom.gameOver = true; stopTimer(currentRoom);
+          broadcast(currentRoom, { type: 'game_over', winner: 0, reason: '满盘无五连，和棋', winnerName: '平局', loserName: '' });
+          recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+          cleanupRoom(currentRoom);
         } else if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
+          const gen = currentRoom.ply;
           setTimeout(() => {
-            if (currentRoom.gameOver) return;
+            if (currentRoom.gameOver || currentRoom.ply !== gen || currentRoom.turn !== currentRoom.aiColor) return;
             const aiMove = gomokuAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size, currentRoom.forbidden);
             if (aiMove) {
               const [aiR, aiC] = aiMove;
@@ -918,6 +1037,11 @@ wss.on('connection', (ws) => {
                 broadcast(currentRoom, { type: 'game_over', winner: currentRoom.aiColor, reason: '五子连珠', winnerName: wName, loserName: lName });
                 if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
                 cleanupRoom(currentRoom);
+              } else if (currentRoom.moveCount >= currentRoom.size * currentRoom.size) {
+                currentRoom.gameOver = true; stopTimer(currentRoom);
+                broadcast(currentRoom, { type: 'game_over', winner: 0, reason: '满盘无五连，和棋', winnerName: '平局', loserName: '' });
+                recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+                cleanupRoom(currentRoom);
               }
             }
           }, 500);
@@ -945,8 +1069,9 @@ wss.on('connection', (ws) => {
         currentRoom.turn = opponent;
         broadcast(currentRoom, { type: 'move', r, c, color: myColor, turn: currentRoom.turn, lastMove: [r, c], goCaptures: currentRoom.goCaptures, board: currentRoom.board.map(row => [...row]) });
         if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
+          const gen = currentRoom.ply;
           setTimeout(() => {
-            if (currentRoom.gameOver) return;
+            if (currentRoom.gameOver || currentRoom.ply !== gen || currentRoom.turn !== currentRoom.aiColor) return;
             let aiMove = goAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size);
             let aiResult = 0;
             if (aiMove) {
@@ -1015,11 +1140,12 @@ wss.on('connection', (ws) => {
           currentRoom.gameOver = true; stopTimer(currentRoom);
           const wName = currentRoom.names[myColor], lName = currentRoom.names[opponent];
           broadcast(currentRoom, { type: 'game_over', winner: myColor, reason: chessInCheck(currentRoom.board, opponent) ? '将杀' : '困毙', winnerName: wName, loserName: lName });
-          if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'chess');
+          if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'chess');
           cleanupRoom(currentRoom);
         } else if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
+          const gen = currentRoom.ply;
           setTimeout(() => {
-            if (currentRoom.gameOver) return;
+            if (currentRoom.gameOver || currentRoom.ply !== gen || currentRoom.turn !== currentRoom.aiColor) return;
             const aiMove = chessAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty);
             if (aiMove) {
               const [aiFr, aiFc, aiTr, aiTc] = aiMove;
@@ -1034,7 +1160,7 @@ wss.on('connection', (ws) => {
                 currentRoom.gameOver = true; stopTimer(currentRoom);
                 const wName = currentRoom.names[currentRoom.aiColor], lName = currentRoom.names[currentRoom.turn];
                 broadcast(currentRoom, { type: 'game_over', winner: currentRoom.aiColor, reason: chessInCheck(currentRoom.board, currentRoom.turn) ? '将杀' : '困毙', winnerName: wName, loserName: lName });
-                if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'chess');
+                if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'chess');
                 cleanupRoom(currentRoom);
               }
             }
@@ -1048,12 +1174,18 @@ wss.on('connection', (ws) => {
         const pieceColor = intlPieceColor(piece);
         if (pieceColor !== myColor) return ws.send(JSON.stringify({ type: 'error', msg: '不是你的棋子' }));
         const legalMoves = getIntlChessLegalMoves(currentRoom.board, fr, fc, currentRoom.intlLastMove);
-        const validMove = legalMoves.find(([mr, mc, sp]) => mr === tr && mc === tc && (sp === special || (!sp && !special)));
+        // 客户端只发坐标、不带 special：按目标格匹配（升变/易位/吃过路兵的走法都带 special），
+        // 同一目标格有多个候选（升变四选一）时优先取客户端指定的 special，否则默认后
+        const candidates = legalMoves.filter(([mr, mc]) => mr === tr && mc === tc);
+        const validMove = candidates.length === 0 ? null
+          : candidates.length === 1 ? candidates[0]
+          : (candidates.find(([, , sp]) => special != null && special !== '' && String(sp).toLowerCase() === String(special).toLowerCase()) || candidates[0]);
         if (!validMove) return ws.send(JSON.stringify({ type: 'error', msg: '不能这样走' }));
         const saved = currentRoom.board.map(row => [...row]);
+        const prevIntl = currentRoom.intlLastMove;
         const { captured, newLastMove } = makeIntlMove(currentRoom.board, fr, fc, tr, tc, validMove[2], currentRoom.intlLastMove);
         currentRoom.intlLastMove = newLastMove;
-        currentRoom.moveHistory.push({ type: 'move', fr, fc, tr, tc, special: validMove[2], color: myColor, captured, board: saved });
+        currentRoom.moveHistory.push({ type: 'move', fr, fc, tr, tc, special: validMove[2], color: myColor, captured, board: saved, prevIntl });
         currentRoom.lastMove = [tr, tc]; currentRoom.moveCount++;
         const opponent = myColor === 1 ? 2 : 1; currentRoom.turn = opponent;
         broadcast(currentRoom, { type: 'move', fr, fc, tr, tc, special: validMove[2], color: myColor, turn: currentRoom.turn, captured, lastMove: [tr, tc], board: currentRoom.board });
@@ -1069,24 +1201,26 @@ wss.on('connection', (ws) => {
           broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName });
           // 将杀记录胜负；逼和为平局记录和棋
           if (checkmate && wName && lName && wName !== lName) {
-            recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
+            recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
           } else if (!checkmate) {
-            recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
+            recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
           }
           cleanupRoom(currentRoom);
         } else {
           if (check) broadcast(currentRoom, { type: 'chat', color: 0, text: '将军！' });
           // AI走棋
           if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
+            const gen = currentRoom.ply;
             setTimeout(() => {
-              if (currentRoom.gameOver) return;
+              if (currentRoom.gameOver || currentRoom.ply !== gen || currentRoom.turn !== currentRoom.aiColor) return;
               const aiMove = intlGetAIMove(currentRoom.board, currentRoom.difficulty, currentRoom.intlLastMove, currentRoom.aiColor);
               if (aiMove) {
                 const { fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial } = aiMove;
                 const aiSaved = currentRoom.board.map(row => [...row]);
+                const aiPrevIntl = currentRoom.intlLastMove;
                 const { captured: aiCaptured, newLastMove: aiLastMove } = makeIntlMove(currentRoom.board, aiFr, aiFc, aiTr, aiTc, aiSpecial, currentRoom.intlLastMove);
                 currentRoom.intlLastMove = aiLastMove;
-                currentRoom.moveHistory.push({ type: 'move', fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial, color: currentRoom.aiColor, captured: aiCaptured, board: aiSaved });
+                currentRoom.moveHistory.push({ type: 'move', fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial, color: currentRoom.aiColor, captured: aiCaptured, board: aiSaved, prevIntl: aiPrevIntl });
                 currentRoom.lastMove = [aiTr, aiTc]; currentRoom.moveCount++;
                 currentRoom.turn = currentRoom.aiColor === 1 ? 2 : 1;
                 broadcast(currentRoom, { type: 'move', fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial, color: currentRoom.aiColor, turn: currentRoom.turn, captured: aiCaptured, lastMove: [aiTr, aiTc], board: currentRoom.board });
@@ -1099,8 +1233,8 @@ wss.on('connection', (ws) => {
                   const reason = aiCheckmate ? '将杀' : '逼和（平局）';
                   const winner = aiCheckmate ? currentRoom.aiColor : 0;
                   broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName });
-                  if (aiCheckmate && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
-                  else if (!aiCheckmate) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), 'intl_chess');
+                  if (aiCheckmate && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
+                  else if (!aiCheckmate) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
                   cleanupRoom(currentRoom);
                 } else if (aiCheck) {
                   broadcast(currentRoom, { type: 'chat', color: 0, text: '将军！' });
@@ -1116,6 +1250,8 @@ wss.on('connection', (ws) => {
     if (msg.type === 'pass') {
       const currentRoom = findRoomByWs(ws);
       if (!currentRoom || currentRoom.gameOver || currentRoom.gameType !== 'go') return;
+      if (!currentRoom.started || currentRoom.choosing) return; // 选先手阶段不计对局
+      if (currentRoom.players.some(p => p.grace)) return;
       const myColor = getPlayerColor(currentRoom, ws);
       if (currentRoom.turn !== myColor) return;
       currentRoom.passCount++; currentRoom.moveHistory.push({ type: 'pass', color: myColor });
@@ -1136,8 +1272,9 @@ wss.on('connection', (ws) => {
         else if (winner === 0) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
         cleanupRoom(currentRoom);
       } else if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
+        const gen = currentRoom.ply;
         setTimeout(() => {
-          if (currentRoom.gameOver) return;
+          if (currentRoom.gameOver || currentRoom.ply !== gen || currentRoom.turn !== currentRoom.aiColor) return;
           let aiMove = goAI(currentRoom.board, currentRoom.aiColor, currentRoom.difficulty, currentRoom.size);
           let aiResult = 0;
           if (aiMove) {
@@ -1188,13 +1325,14 @@ wss.on('connection', (ws) => {
     if (msg.type === 'resign') {
       const currentRoom = findRoomByWs(ws);
       if (!currentRoom || currentRoom.gameOver) return;
+      if (!currentRoom.started || currentRoom.choosing) return; // 选先手阶段认输不结算
       const myColor = getPlayerColor(currentRoom, ws);
       if (myColor !== 1 && myColor !== 2) return; // 观战者不可认输
       currentRoom.gameOver = true; stopTimer(currentRoom);
       const winner = myColor === 1 ? 2 : 1;
       const wName = currentRoom.names[winner], lName = currentRoom.names[myColor];
       broadcast(currentRoom, { type: 'game_over', winner, reason: '认输', winnerName: wName, loserName: lName });
-      if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), currentRoom.gameType);
+      if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), currentRoom.gameType);
       cleanupRoom(currentRoom);
     }
 
@@ -1215,6 +1353,7 @@ wss.on('connection', (ws) => {
           const last = currentRoom.moveHistory.pop();
           if (last.board) currentRoom.board = last.board.map(row => [...row]);
           if (last.goCaptures) currentRoom.goCaptures = [...last.goCaptures];
+          currentRoom.intlLastMove = 'prevIntl' in last ? last.prevIntl : null;
           if (last.type !== 'pass') undoMoves++;
           popped++;
           if (last.color === myColor) break; // 撤销到玩家自己的那步
@@ -1224,9 +1363,9 @@ wss.on('connection', (ws) => {
         currentRoom.undoCount[myColor - 1]++;
         currentRoom.turn = myColor;
         currentRoom.lastMove = null;
-        currentRoom.intlLastMove = null;
         currentRoom.keyBeforeLast = null;
         currentRoom.pendingUndo = null;
+        currentRoom.ply++; // 作废挂起的 AI 回调
         broadcast(currentRoom, { type: 'undo_approved', turn: currentRoom.turn, board: currentRoom.board, moveCount: currentRoom.moveCount });
         return;
       }
@@ -1238,20 +1377,24 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'undo_response') {
       const currentRoom = findRoomByWs(ws);
-      if (!currentRoom || !currentRoom.pendingUndo) return;
+      if (!currentRoom || currentRoom.gameOver || !currentRoom.pendingUndo) return;
       const myColor = getPlayerColor(currentRoom, ws);
       if (myColor !== 1 && myColor !== 2) return; // 观战者不可响应
       if (myColor !== (currentRoom.pendingUndo.from === 1 ? 2 : 1)) return;
       if (msg.approve) {
+        let popped = null;
         for (let i = 0; i < 1 && currentRoom.moveHistory.length > 0; i++) {
-          const last = currentRoom.moveHistory.pop();
-          if (last.board) currentRoom.board = last.board.map(row => [...row]);
-          if (last.goCaptures) currentRoom.goCaptures = [...last.goCaptures];
+          popped = currentRoom.moveHistory.pop();
+          if (popped.board) currentRoom.board = popped.board.map(row => [...row]);
+          if (popped.goCaptures) currentRoom.goCaptures = [...popped.goCaptures];
           currentRoom.moveCount--;
         }
         currentRoom.undoCount[currentRoom.pendingUndo.from - 1]++;
         currentRoom.turn = currentRoom.pendingUndo.from;
         currentRoom.lastMove = null;
+        currentRoom.keyBeforeLast = null;
+        if (popped) currentRoom.intlLastMove = 'prevIntl' in popped ? popped.prevIntl : null;
+        currentRoom.ply++; // 作废挂起的 AI 回调
         broadcast(currentRoom, { type: 'undo_approved', turn: currentRoom.turn, board: currentRoom.board, moveCount: currentRoom.moveCount });
       } else {
         broadcast(currentRoom, { type: 'undo_rejected' });
@@ -1263,6 +1406,7 @@ wss.on('connection', (ws) => {
     if (msg.type === 'draw_request') {
       const currentRoom = findRoomByWs(ws);
       if (!currentRoom || currentRoom.gameOver) return;
+      if (!currentRoom.started || currentRoom.choosing) return; // 选先手阶段不可求和
       const myColor = getPlayerColor(currentRoom, ws);
       if (myColor !== 1 && myColor !== 2) return; // 观战者不可求和
       if (currentRoom.drawCount[myColor - 1] >= 3) { ws.send(JSON.stringify({ type: 'error', msg: '每局最多求和3次' })); return; }
@@ -1283,14 +1427,14 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'draw_response') {
       const currentRoom = findRoomByWs(ws);
-      if (!currentRoom || !currentRoom.pendingDraw) return;
+      if (!currentRoom || currentRoom.gameOver || !currentRoom.pendingDraw) return;
       const myColor = getPlayerColor(currentRoom, ws);
       if (myColor !== 1 && myColor !== 2) return; // 观战者不可响应
       if (myColor !== (currentRoom.pendingDraw.from === 1 ? 2 : 1)) return;
       if (msg.approve) {
         currentRoom.gameOver = true; stopTimer(currentRoom);
         broadcast(currentRoom, { type: 'game_over', winner: 0, reason: '双方同意和棋', winnerName: '平局', loserName: '' });
-        recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), currentRoom.gameType);
+        recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), currentRoom.gameType);
         cleanupRoom(currentRoom);
       } else {
         currentRoom.drawCount[currentRoom.pendingDraw.from - 1]++;
@@ -1318,6 +1462,7 @@ wss.on('connection', (ws) => {
       currentRoom.keyBeforeLast = null;
       currentRoom.timeLeft = [currentRoom.timerSeconds || 0, currentRoom.timerSeconds || 0];
       currentRoom.choosing = true;
+      currentRoom.ply++; // 作废挂起的 AI 回调
       broadcast(currentRoom, { type: 'restart', board: currentRoom.board });
       if (currentRoom.mode === 'pve' && currentRoom.aiColor === 1) {
         const humanPlayer = currentRoom.players.find(p => !p.isAI);
@@ -1357,6 +1502,7 @@ wss.on('connection', (ws) => {
       let text = String(msg.text || '').substring(0, 200);
       const filteredText = filterSensitive(text);
       const filtered = filteredText !== text;
+      if (filtered) addViolation(username);
       if (filtered) ws.send(JSON.stringify({ type: 'chat', color: 0, text: '系统：消息包含敏感词，已过滤处理' }));
       await ChatLog.create({ id: genId(), roomId: currentRoom.id, username, color: chatColor, text: filteredText, filtered, time: new Date().toISOString() });
       broadcast(currentRoom, { type: 'chat', color: chatColor, text: filteredText, name: username });
@@ -1387,50 +1533,31 @@ wss.on('connection', (ws) => {
       room.gameOver = true;
       cleanupRoom(room);
       rooms.delete(room.id);
-    } else {
-      const myColor = getPlayerColor(room, ws);
-      const myName = room.names[myColor]; // 删除前先取名，供 recordGame 使用
-      room.players = room.players.filter(p => p.ws !== ws);
-      if (myColor) {
-        delete room.names[myColor];
-        delete room.tokens[myColor];
-      }
-      if (!room.gameOver && myColor) {
-        room.gameOver = true; stopTimer(room);
-        const winner = myColor === 1 ? 2 : 1;
-        const wName = room.names[winner], lName = myName;
-        broadcast(room, { type: 'game_over', winner, reason: '对手离开', winnerName: wName, loserName: lName || '对手' });
-        if (wName && lName && wName !== lName) recordGame(wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color })), room.gameType);
-      }
-      broadcast(room, { type: 'player_left', color: myColor });
-      if (room.players.length === 0) {
-        cleanupRoom(room);
-        rooms.delete(room.id);
-      } else if (room.gameOver) {
-        room.gameOver = false;
-        room.started = false;
-        room.choosing = false;
-        room.turn = 1;
-        room.moveCount = 0;
-        room.moveHistory = [];
-        room.undoCount = [0, 0];
-        room.drawCount = [0, 0];
-        room.pendingUndo = null;
-        room.pendingDraw = null;
-        room.passCount = 0;
-        room.lastMove = null;
-        room.intlLastMove = null;
-        room.goCaptures = [0, 0];
-        room.keyBeforeLast = null;
-        room.timeLeft = [room.timerSeconds, room.timerSeconds];
-        const gt = room.gameType;
-        if (gt === 'chess') room.board = createChessBoard();
-        else if (gt === 'intl_chess') room.board = createIntlChessBoard();
-        else if (gt === 'go') room.board = createGoBoard(room.size);
-        else room.board = createGomokuBoard(room.size);
-        broadcast(room, { type: 'names', names: room.names, gameType: room.gameType });
-        broadcast(room, { type: 'restart', board: room.board });
-      }
+      return;
+    }
+    const myColor = getPlayerColor(room, ws);
+    const wasChoosing = room.choosing || !room.started;
+    // 对局进行中断线：30秒宽限期（暂停计时），期间重连则恢复，超时才判负结算
+    if (!room.gameOver && !wasChoosing && (myColor === 1 || myColor === 2)) {
+      const p = room.players.find(pp => pp.ws === ws);
+      if (p) { p.ws = null; p.grace = true; }
+      stopTimer(room);
+      broadcast(room, { type: 'player_left', color: myColor, graceSeconds: 30, reason: '对手断线' });
+      if (!room.graceTimer) room.graceTimer = setTimeout(() => finishLeave(room), 30000);
+      return;
+    }
+    // 未开局/选先手阶段/已终局：仅清座位，不记录对局、不结算 Elo
+    room.players = room.players.filter(p => p.ws !== ws);
+    if (myColor) {
+      delete room.names[myColor];
+      delete room.tokens[myColor];
+    }
+    broadcast(room, { type: 'player_left', color: myColor });
+    if (room.players.length === 0) {
+      cleanupRoom(room);
+      rooms.delete(room.id);
+    } else if (room.gameOver || wasChoosing) {
+      resetForNewGame(room);
     }
   });
 });
@@ -1508,6 +1635,14 @@ app.get('*', (req, res, next) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ==================== 统一错误兜底 ====================
+// async 路由抛错时返回 5xx，避免请求永久挂起
+app.use((err, req, res, next) => {
+  console.error('[http] 请求处理失败:', err.message);
+  if (res.headersSent) return next(err);
+  res.status(err.status || 500).json({ error: '服务器内部错误' });
+});
+
 // ==================== 启动 ====================
 const PORT = process.env.GAME_PORT || 3002;
 server.listen(PORT, '::', () => {
@@ -1515,3 +1650,13 @@ server.listen(PORT, '::', () => {
   console.log(`五子棋(用户版)运行在 ${scheme}://localhost:${PORT} (IPv6: ${scheme}://[::1]:${PORT})${usingHTTPS ? ' [HTTPS]' : ''}`);
   if (process.env.SITE_URL) console.log(`对外地址: ${process.env.SITE_URL}（域名与 localhost 均可访问）`);
 });
+
+// HTTPS 模式下额外提供仅监听回环的明文 HTTP，供管理后台回源
+if (usingHTTPS) {
+  const localPort = parseInt(process.env.LOCAL_HTTP_PORT, 10) || 3002;
+  const localServer = http.createServer(app);
+  localServer.on('error', (e) => console.warn(`[http-local] 本地回环 http://localhost:${localPort} 启动失败:`, e.message));
+  localServer.listen(localPort, '127.0.0.1', () => {
+    console.log(`[http-local] 本地回环 http://localhost:${localPort}（供管理后台回源）`);
+  });
+}

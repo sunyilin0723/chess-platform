@@ -304,10 +304,10 @@ function makeIntlMove(board, fr, fc, tr, tc, special, lastMove) {
     newLastMove.type = 'castle_long';
   }
 
-  // 兵升变
-  if (special && typeof special === 'string' && ['q','r','b','n'].includes(special)) {
-    board[tr][tc] = color === 1 ? special.toUpperCase() : special;
-    newLastMove.promotion = special;
+  // 兵升变（生成时白方 special 为大写，须大小写兼容，否则白兵到底线仍是兵）
+  if (special && typeof special === 'string' && ['q','r','b','n'].includes(special.toLowerCase())) {
+    board[tr][tc] = color === 1 ? special.toUpperCase() : special.toLowerCase();
+    newLastMove.promotion = special.toLowerCase();
     undo.promotion = true;
   }
 

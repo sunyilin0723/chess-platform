@@ -24,16 +24,22 @@ app.use(express.json());
 const GAME_SERVER = 'http://localhost:' + (process.env.GAME_PORT || '3002');
 // 对外域名（可选）：localhost 与域名两条路都可用，任一可达即成功
 const SITE_URL = (process.env.SITE_URL || '').replace(/\/+$/, '');
-// 游戏服开了 HTTPS（Origin 证书）时，本地 http://localhost:端口 握不上手，优先走 https 域名
+// 游戏服开了 HTTPS（Origin 证书）时，本地 http://localhost:端口 握不上手，需走回环或域名
 const SSL_ON = !!(process.env.SSL_CERT_PATH && process.env.SSL_KEY_PATH);
-const gameBases = [...new Set((SSL_ON ? [SITE_URL, GAME_SERVER] : [GAME_SERVER, SITE_URL]).filter(Boolean))];
+// HTTPS 模式下游戏服另开仅监听 127.0.0.1 的 HTTP 回环，优先走它
+const LOCAL_HTTP = 'http://localhost:' + (process.env.LOCAL_HTTP_PORT || '3002');
+const gameBases = [...new Set((SSL_ON ? [LOCAL_HTTP, SITE_URL, GAME_SERVER] : [GAME_SERVER, SITE_URL]).filter(Boolean))];
 async function fetchGame(pathAndQuery, opts) {
-  let lastErr;
+  const errors = [];
   for (const base of gameBases) {
-    try { return await fetch(base + pathAndQuery, opts); }
-    catch (e) { lastErr = e; }
+    try {
+      const res = await fetch(base + pathAndQuery, opts);
+      if (!res.ok) { errors.push(base + ' -> HTTP ' + res.status); continue; }
+      return res;
+    } catch (e) { errors.push(base + ' -> ' + (e && e.message || e)); }
   }
-  throw lastErr;
+  console.error('[fetchGame] 所有候选均失败 ' + pathAndQuery + ': ' + errors.join(' | '));
+  throw new Error('游戏服请求失败: ' + errors.join(' | '));
 }
 const ADMIN_KEY = process.env.ADMIN_KEY || 'no-key-configured';
 
@@ -77,6 +83,7 @@ const reportSchema = new mongoose.Schema({
 const gameLogSchema = new mongoose.Schema({
   winner: { type: String, required: true },
   loser: { type: String, required: true },
+  draw: { type: Boolean, default: false },
   totalMoves: { type: Number, default: 0 },
   gameType: { type: String, default: 'gomoku' },
   moves: { type: [mongoose.Schema.Types.Mixed], default: [] },

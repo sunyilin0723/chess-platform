@@ -538,7 +538,7 @@ canvas{display:block;border-radius:8px;box-shadow:0 0 20px var(--board-shadow);t
   }
   #report-dialog > div, #welcome-dialog > div, #feedback-dialog > div,
   #dm-conversation-dialog > div, #new-dm-dialog > div,
-  #join-choice-dialog > div {
+  #join-choice-dialog > div, #promotion-dialog > div {
     width: 92vw !important;
     max-width: none !important;
     padding: 20px !important;
