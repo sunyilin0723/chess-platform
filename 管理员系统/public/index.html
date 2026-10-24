@@ -12,6 +12,12 @@ body { font-family: 'Microsoft YaHei', sans-serif; background: #0f1923; color: #
 .header .nav { display: flex; gap: 16px; }
 .header .nav span { cursor: pointer; color: #888; font-size: 14px; }
 .header .nav span.active, .header .nav span:hover { color: #fff; }
+.nav-dropdown { position: relative; }
+.nav-dropdown > span { display: inline-block; }
+.nav-dropdown-menu { display: none; position: absolute; top: 100%; left: 0; background: #16213e; border: 1px solid #222; border-radius: 6px; padding: 6px 0; min-width: 110px; z-index: 100; }
+.nav-dropdown:hover .nav-dropdown-menu, .nav-dropdown.open .nav-dropdown-menu { display: block; }
+.nav-dropdown-menu span { display: block; padding: 8px 16px; white-space: nowrap; }
+.nav-dropdown-menu span:hover { background: #1e2d4d; }
 .page { display: none; padding: 20px 24px; }
 .page.active { display: block; }
 .page h2 { margin-bottom: 16px; font-size: 20px; }
@@ -70,12 +76,18 @@ body { font-family: 'Microsoft YaHei', sans-serif; background: #0f1923; color: #
   <h1>五子棋管理后台</h1>
   <div class="nav">
     <span class="active" data-page="rooms" onclick="showPage('rooms')">实时对局</span>
-    <span data-page="reports" onclick="showPage('reports')">举报审核</span>
-    <span data-page="appeals" onclick="showPage('appeals')">申诉审核</span>
+    <div class="nav-dropdown" id="nav-audit">
+      <span id="nav-audit-parent">审核</span>
+      <div class="nav-dropdown-menu">
+        <span data-page="reports" onclick="showPage('reports')">举报审核</span>
+        <span data-page="appeals" onclick="showPage('appeals')">申诉审核</span>
+      </div>
+    </div>
     <span data-page="gamelog" onclick="showPage('gamelog')">对局记录</span>
     <span data-page="chatlog" onclick="showPage('chatlog')">聊天日志</span>
     <span data-page="user" onclick="showPage('user')">用户查询</span>
     <span data-page="admins" onclick="showPage('admins')">管理员</span>
+    <span data-page="broadcast" id="nav-broadcast" onclick="showPage('broadcast')" style="display:none;color:#f0c040">广播</span>
     <span data-page="feedbacks" id="nav-feedbacks" onclick="showPage('feedbacks')" style="display:none;color:#f0c040">反馈</span>
     <span onclick="adminLogout()" style="color:#e74c3c;">退出</span>
   </div>
@@ -178,6 +190,34 @@ body { font-family: 'Microsoft YaHei', sans-serif; background: #0f1923; color: #
   <div id="feedbacks-content" style="max-width:700px;"></div>
 </div>
 
+<div id="page-broadcast" class="page">
+  <h2>广播通知</h2>
+  <div style="background:#16213e;border-radius:10px;padding:16px;border:1px solid #222;max-width:700px;">
+    <div style="margin-bottom:12px;display:flex;gap:16px;align-items:center;">
+      <label style="color:#ccc;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="radio" name="broadcast-mode" value="all" checked onchange="broadcastModeChanged()"> 全员广播
+      </label>
+      <label style="color:#ccc;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="radio" name="broadcast-mode" value="target" onchange="broadcastModeChanged()"> 指定成员
+      </label>
+    </div>
+    <div id="broadcast-target-area" style="display:none;margin-bottom:12px;position:relative;">
+      <input id="broadcast-user" placeholder="输入用户名搜索…" oninput="broadcastSearchInput()"
+        style="width:100%;padding:10px 12px;font-size:14px;border:1px solid #5c9ded;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;">
+      <div id="broadcast-search-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e2d4d;border:1px solid #333;border-radius:6px;margin-top:2px;z-index:50;max-height:180px;overflow-y:auto;"></div>
+      <div id="broadcast-recipient" style="display:none;margin-top:8px;font-size:13px;color:#2ecc71;">
+        收件人：<span id="broadcast-recipient-name"></span>
+        <span onclick="broadcastClearRecipient()" style="cursor:pointer;color:#e74c3c;margin-left:8px;" title="清除">✕</span>
+      </div>
+    </div>
+    <textarea id="broadcast-content" placeholder="请输入通知内容（必填，最多200字）" maxlength="200" oninput="broadcastCountUpdate()"
+      style="width:100%;min-height:100px;padding:10px 12px;font-size:14px;border:1px solid #5c9ded;border-radius:6px;background:#1e2d4d;color:#fff;outline:none;resize:vertical;margin-bottom:6px;"></textarea>
+    <div id="broadcast-count" style="font-size:12px;color:#888;margin-bottom:10px;">0 / 200</div>
+    <button onclick="sendBroadcast()" style="padding:10px 24px;background:#0f3460;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;">发送</button>
+    <div id="broadcast-msg" style="margin-top:10px;font-size:13px;"></div>
+  </div>
+</div>
+
 <script>
 const reportTypeNames = { boost: '刷胜率/放水', cheat: '使用外挂', abuse: '恶意行为', other: '其他' };
 let refreshTimer = null;
@@ -188,6 +228,9 @@ function showPage(name) {
   document.querySelectorAll('.header .nav span').forEach(s => s.classList.remove('active'));
   const target = document.querySelector(`.header .nav span[data-page="${name}"]`);
   if (target) target.classList.add('active');
+  // 审核二级菜单：当前为 reports/appeals 时点亮父级
+  const auditParent = document.getElementById('nav-audit-parent');
+  if (auditParent && (name === 'reports' || name === 'appeals')) auditParent.classList.add('active');
   if (name === 'rooms') refreshRooms();
   if (name === 'reports') refreshReports();
   if (name === 'appeals') refreshAppeals();
@@ -220,6 +263,7 @@ async function adminLogin() {
     localStorage.setItem('admin_is_main', data.isMain);
     document.getElementById('login-overlay').style.display = 'none';
     document.getElementById('nav-feedbacks').style.display = isMainAdmin ? 'inline' : 'none';
+    document.getElementById('nav-broadcast').style.display = isMainAdmin ? 'inline' : 'none';
     refreshRooms();
   } catch (e) { document.getElementById('login-error').textContent = '登录失败'; }
 }
@@ -239,6 +283,7 @@ if (!adminKey) {
 } else {
   document.getElementById('login-overlay').style.display = 'none';
   document.getElementById('nav-feedbacks').style.display = isMainAdmin ? 'inline' : 'none';
+  document.getElementById('nav-broadcast').style.display = isMainAdmin ? 'inline' : 'none';
 }
 
 async function apiFetch(path, opts) {
@@ -884,6 +929,89 @@ async function replyFeedback(feedbackId) {
     alert('回复成功，已通知用户');
     refreshFeedbacks();
   } catch (e) { alert(e.message); }
+}
+
+// ==================== 广播通知 ====================
+let broadcastRecipient = '';
+let broadcastSearchTimer = null;
+
+function broadcastModeChanged() {
+  const mode = document.querySelector('input[name="broadcast-mode"]:checked').value;
+  document.getElementById('broadcast-target-area').style.display = mode === 'target' ? 'block' : 'none';
+  if (mode === 'all') broadcastClearRecipient();
+}
+
+function broadcastCountUpdate() {
+  const len = document.getElementById('broadcast-content').value.length;
+  document.getElementById('broadcast-count').textContent = len + ' / 200';
+  document.getElementById('broadcast-count').style.color = len > 200 ? '#e74c3c' : '#888';
+}
+
+function broadcastSearchInput() {
+  if (broadcastSearchTimer) clearTimeout(broadcastSearchTimer);
+  broadcastSearchTimer = setTimeout(broadcastSearchUsers, 300);
+}
+
+async function broadcastSearchUsers() {
+  const q = document.getElementById('broadcast-user').value.trim();
+  const listEl = document.getElementById('broadcast-search-list');
+  if (!q) { listEl.style.display = 'none'; listEl.innerHTML = ''; return; }
+  try {
+    const r = await apiFetch('/api/search-users?q=' + encodeURIComponent(q));
+    if (!r.list || !r.list.length) { listEl.innerHTML = '<div style="padding:10px;color:#888;font-size:13px;">无匹配用户</div>'; listEl.style.display = 'block'; return; }
+    listEl.innerHTML = r.list.map(u => `<div data-u="${u.username}" onclick="broadcastPickUser(this.getAttribute('data-u'))" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #333;">${u.username}</div>`).join('');
+    listEl.style.display = 'block';
+  } catch (e) {
+    listEl.innerHTML = '<div style="padding:10px;color:#e74c3c;font-size:13px;">搜索失败</div>';
+    listEl.style.display = 'block';
+  }
+}
+
+function broadcastPickUser(username) {
+  broadcastRecipient = username;
+  document.getElementById('broadcast-recipient-name').textContent = username;
+  document.getElementById('broadcast-recipient').style.display = 'block';
+  document.getElementById('broadcast-search-list').style.display = 'none';
+  document.getElementById('broadcast-user').value = username;
+}
+
+function broadcastClearRecipient() {
+  broadcastRecipient = '';
+  document.getElementById('broadcast-recipient').style.display = 'none';
+  document.getElementById('broadcast-user').value = '';
+  document.getElementById('broadcast-search-list').style.display = 'none';
+}
+
+async function sendBroadcast() {
+  const msgEl = document.getElementById('broadcast-msg');
+  const content = document.getElementById('broadcast-content').value.trim();
+  if (!content) { msgEl.style.color = '#e74c3c'; msgEl.textContent = '请填写通知内容'; return; }
+  if (content.length > 200) { msgEl.style.color = '#e74c3c'; msgEl.textContent = '通知内容不能超过200字'; return; }
+  const mode = document.querySelector('input[name="broadcast-mode"]:checked').value;
+  if (mode === 'target' && !broadcastRecipient) { msgEl.style.color = '#e74c3c'; msgEl.textContent = '请先搜索并选择收件人'; return; }
+  msgEl.textContent = '发送中…'; msgEl.style.color = '#888';
+  try {
+    const r = await apiFetch('/api/broadcast', {
+      method: 'POST',
+      body: JSON.stringify({ content, username: mode === 'target' ? broadcastRecipient : '' })
+    });
+    if (r.error) { msgEl.style.color = '#e74c3c'; msgEl.textContent = r.error; return; }
+    if (r.offline) {
+      msgEl.style.color = '#f0c040';
+      msgEl.textContent = '已离线写入 ' + r.count + ' 条（无实时推送）';
+    } else {
+      msgEl.style.color = '#2ecc71';
+      msgEl.textContent = '已发送给 ' + r.count + ' 人';
+    }
+    document.getElementById('broadcast-content').value = '';
+    broadcastCountUpdate();
+    broadcastClearRecipient();
+    const allRadio = document.querySelector('input[name="broadcast-mode"][value="all"]');
+    if (allRadio) { allRadio.checked = true; broadcastModeChanged(); }
+  } catch (e) {
+    msgEl.style.color = '#e74c3c';
+    msgEl.textContent = e.message === '认证失败' ? '登录已过期' : '发送失败';
+  }
 }
 
 refreshRooms();

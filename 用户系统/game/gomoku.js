@@ -298,7 +298,7 @@ function minimax(board, depth, alpha, beta, isMaximizing, aiColor, size, forbidd
     const score = evaluateBoard(board, aiColor, size);
     board[r][c] = 0;
     return { r, c, score };
-  }).sort((a, b) => isMaximizing ? b.score - a.score : a.score - b.score);
+  }).sort((a, b) => isMaximizing ? b.score - a.score : a.score - b.score).slice(0, 12); // 限制分支，避免搜索阻塞事件循环
   if (isMaximizing) {
     let maxEval = -Infinity;
     for (const { r, c } of scoredMoves) {
@@ -328,7 +328,7 @@ function minimax(board, depth, alpha, beta, isMaximizing, aiColor, size, forbidd
 }
 
 function getAIMove(board, aiColor, difficulty, size, forbiddenRule) {
-  const depths = { easy: 2, medium: 3, hard: 5 };
+  const depths = { easy: 1, medium: 2, hard: 3 };
   const depth = depths[difficulty] || 2;
   const candidates = getCandidateMoves(board, size);
   let bestMove = null, bestScore = -Infinity;
@@ -338,7 +338,7 @@ function getAIMove(board, aiColor, difficulty, size, forbiddenRule) {
     board[r][c] = aiColor;
     const score = minimax(board, depth - 1, -Infinity, Infinity, false, aiColor, size, forbiddenRule);
     board[r][c] = 0;
-    const randomFactor = difficulty === 'easy' ? (Math.random() * 40 - 20) : 0;
+    const randomFactor = difficulty === 'easy' ? (Math.random() * 120 - 60) : (difficulty === 'medium' ? (Math.random() * 40 - 20) : 0);
     if (score + randomFactor > bestScore) { bestScore = score + randomFactor; bestMove = [r, c]; }
   }
   if (bestMove) return bestMove;

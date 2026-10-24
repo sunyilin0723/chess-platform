@@ -84,6 +84,7 @@ mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/gomoku')
 // ==================== 工具函数 ====================
 const rooms = new Map();
 const mutedChat = new Map();
+const onlineUsers = new Map(); // username -> Set<ws>，多标签页累积；用于通知实时推送
 
 function createRoom(roomId, gameType, timerSeconds, mode, difficulty, forbidden) {
   const size = gameType === 'chess' ? null : (gameType === 'go' ? 19 : 15);
@@ -376,6 +377,12 @@ async function banUser(username, reason, days) {
 
 async function pushNotif(username, title, content) {
   await Notification.create({ id: genId(), username, title, content, time: new Date().toISOString() });
+  // 在线则实时推 WS（形状须与前端 game2.js 的 new_notif 契约一致）
+  const online = onlineUsers.get(username);
+  if (online && online.size) {
+    const data = JSON.stringify({ type: 'new_notif', title, content });
+    for (const c of online) { if (c && c.readyState === 1) c.send(data); }
+  }
 }
 
 // ==================== Cloudflare Turnstile 人机验证 ====================
@@ -469,7 +476,8 @@ async function authMiddleware(req, res, next) {
 // ==================== 排行榜 ====================
 app.get('/api/leaderboard', async (req, res) => {
   const game = ['gomoku', 'go', 'chess', 'intl_chess'].includes(req.query.game) ? req.query.game : 'gomoku';
-  const users = await User.find({ deletedAt: null }).select('username games gameCounts ratings').lean();
+  // 只排该棋类下有对局记录的用户（gameCounts 分棋类计数，没打过的不上榜）
+  const users = await User.find({ deletedAt: null, [`gameCounts.${game}`]: { $gt: 0 } }).select('username games gameCounts ratings').lean();
   const list = users.map(u => ({
     username: u.username,
     games: (u.gameCounts && typeof u.gameCounts[game] === 'number') ? u.gameCounts[game] : 0,
@@ -755,6 +763,10 @@ wss.on('connection', (ws) => {
           ws.send(JSON.stringify({ type: 'error', msg: `账号已被封禁：${ban.reason}（${timeInfo}）` }));
           return;
         }
+        // 登记在线用户（多标签页用 Set 累积）
+        ws._onlineUser = name;
+        if (!onlineUsers.has(name)) onlineUsers.set(name, new Set());
+        onlineUsers.get(name).add(ws);
 
         const gameType = ['gomoku', 'go', 'chess', 'intl_chess'].includes(msg.gameType) ? msg.gameType : 'gomoku';
         let timerSeconds = Math.floor(Number(msg.timerSeconds));
@@ -1512,6 +1524,15 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     if (ws._pendingJoin) { ws._pendingJoin = null; }
+    // 清理在线登记（重连时新连接已先加入 Set）
+    if (ws._onlineUser) {
+      const set = onlineUsers.get(ws._onlineUser);
+      if (set) {
+        set.delete(ws);
+        if (set.size === 0) onlineUsers.delete(ws._onlineUser);
+      }
+      ws._onlineUser = null;
+    }
     // 通过 ws 在所有房间中查找
     let room = null;
     for (const [id, r] of rooms) {
@@ -1626,6 +1647,30 @@ app.post('/api/admin/force-delete', adminAuth, async (req, res) => {
   await Appeal.deleteMany({ username });
   await Notification.deleteMany({ username });
   res.json({ ok: true });
+});
+
+// 管理员广播：定向 username 或全员；写库 + 在线实时推送
+app.post('/api/admin/notify', adminAuth, async (req, res) => {
+  const { content, username } = req.body || {};
+  if (!content || !String(content).trim()) return res.status(400).json({ error: '请填写通知内容' });
+  const trimmed = String(content).trim();
+  if (trimmed.length > 200) return res.status(400).json({ error: '通知内容不能超过200字' });
+  const filtered = filterSensitive(trimmed);
+  if (username) {
+    const user = await User.findOne({ username, deletedAt: null });
+    if (!user) return res.status(400).json({ error: '用户不存在或已注销' });
+    await pushNotif(username, '管理员通知', filtered);
+    return res.json({ ok: true, count: 1 });
+  }
+  // 全员：分批写库，避免一次性并发过高
+  const users = await User.find({ deletedAt: null }).select('username').lean();
+  let count = 0;
+  for (let i = 0; i < users.length; i += 50) {
+    const batch = users.slice(i, i + 50);
+    await Promise.all(batch.map(u => pushNotif(u.username, '管理员通知', filtered)));
+    count += batch.length;
+  }
+  res.json({ ok: true, count });
 });
 
 // ==================== SPA 路由回退 ====================

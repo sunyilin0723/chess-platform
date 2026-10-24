@@ -42,6 +42,8 @@ async function fetchGame(pathAndQuery, opts) {
   throw new Error('游戏服请求失败: ' + errors.join(' | '));
 }
 const ADMIN_KEY = process.env.ADMIN_KEY || 'no-key-configured';
+// 与游戏服共用敏感词过滤（返回过滤后的字符串）
+const { filterSensitive } = require(path.join(__dirname, '..', '用户系统', 'utils', 'sensitive'));
 
 // MongoDB 连接
 mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/gomoku')
@@ -424,6 +426,54 @@ app.post('/api/feedback/reply', adminAuth, async (req, res) => {
   // 发送站内通知给反馈用户
   pushNotif(fb.from, '反馈已回复', reply.trim().substring(0, 100));
   res.json({ ok: true });
+});
+
+// ==================== 广播通知（仅主管理员） ====================
+// 用户名包含匹配搜索（排除已软删除），供广播定向选人
+app.get('/api/search-users', adminAuth, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json({ list: [] });
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const list = await User.find({ username: { $regex: escaped, $options: 'i' }, deletedAt: null })
+    .select('username').limit(10).lean();
+  res.json({ list: list.map(u => ({ username: u.username })) });
+});
+
+// 广播：优先回源游戏服（写库+WS实时推送），游戏服不可达时本地批量写库降级
+app.post('/api/broadcast', adminAuth, async (req, res) => {
+  if (!(await checkMainAdmin(req, res))) return res.status(403).json({ error: '仅主管理员可发送广播' });
+  const { content, username } = req.body || {};
+  if (!content || !String(content).trim()) return res.status(400).json({ error: '请填写通知内容' });
+  const trimmed = String(content).trim();
+  if (trimmed.length > 200) return res.status(400).json({ error: '通知内容不能超过200字' });
+  const filtered = filterSensitive(trimmed);
+  try {
+    const r = await fetchGame('/api/admin/notify', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + ADMIN_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: filtered, username: username || '' })
+    });
+    const data = await r.json();
+    return res.json({ ok: true, count: data.count || 0 });
+  } catch (e) { /* 游戏服不可达，降级本地写库 */ }
+  // 降级：分批写 Notification，无实时推送
+  try {
+    let count = 0;
+    if (username) {
+      const u = await User.findOne({ username, deletedAt: null });
+      if (!u) return res.status(400).json({ error: '用户不存在或已注销' });
+      await Notification.create({ id: crypto.randomBytes(8).toString('hex'), username, title: '管理员通知', content: filtered, read: false, time: new Date().toISOString() });
+      count = 1;
+    } else {
+      const users = await User.find({ deletedAt: null }).select('username').lean();
+      for (let i = 0; i < users.length; i += 50) {
+        const batch = users.slice(i, i + 50);
+        await Promise.all(batch.map(u => Notification.create({ id: crypto.randomBytes(8).toString('hex'), username: u.username, title: '管理员通知', content: filtered, read: false, time: new Date().toISOString() })));
+        count += batch.length;
+      }
+    }
+    res.json({ ok: true, count, offline: true });
+  } catch (e2) { res.status(500).json({ error: '广播发送失败: ' + (e2 && e2.message || e2) }); }
 });
 
 app.post('/api/force-delete', adminAuth, async (req, res) => {
