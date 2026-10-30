@@ -952,7 +952,7 @@ wss.on('connection', (ws) => {
             const koBlocked = room.keyBeforeLast && boardKey(aiTestBoard) === room.keyBeforeLast;
             if (aiResult !== -1 && !koBlocked) {
               const aiOldKey = boardKey(room.board);
-              room.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: room.aiColor, board: room.board.map(row => [...row]), goCaptures: [...room.goCaptures] });
+              room.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: room.aiColor, board: room.board.map(row => [...row]), goCaptures: [...room.goCaptures], keyBeforeLast: room.keyBeforeLast });
               room.board[aiR][aiC] = room.aiColor;
               goRemoveCaptures(room.board, aiR, aiC, room.aiColor, room.size);
               room.keyBeforeLast = aiOldKey;
@@ -1071,7 +1071,7 @@ wss.on('connection', (ws) => {
           return ws.send(JSON.stringify({ type: 'error', msg: '劫争：不能立即提回' }));
         }
         const oldKey = boardKey(currentRoom.board);
-        currentRoom.moveHistory.push({ type: 'move', r, c, color: myColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures] });
+        currentRoom.moveHistory.push({ type: 'move', r, c, color: myColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures], keyBeforeLast: currentRoom.keyBeforeLast });
         currentRoom.board[r][c] = myColor;
         goRemoveCaptures(currentRoom.board, r, c, myColor, currentRoom.size);
         currentRoom.keyBeforeLast = oldKey;
@@ -1098,7 +1098,7 @@ wss.on('connection', (ws) => {
             if (aiMove) {
               const [aiR, aiC] = aiMove;
               const aiOldKey = boardKey(currentRoom.board);
-              currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures] });
+              currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures], keyBeforeLast: currentRoom.keyBeforeLast });
               currentRoom.board[aiR][aiC] = currentRoom.aiColor;
               goRemoveCaptures(currentRoom.board, aiR, aiC, currentRoom.aiColor, currentRoom.size);
               currentRoom.keyBeforeLast = aiOldKey;
@@ -1107,7 +1107,7 @@ wss.on('connection', (ws) => {
               currentRoom.turn = currentRoom.aiColor === 1 ? 2 : 1;
               broadcast(currentRoom, { type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, turn: currentRoom.turn, lastMove: [aiR, aiC], goCaptures: currentRoom.goCaptures, board: currentRoom.board.map(row => [...row]) });
             } else {
-              currentRoom.passCount++; currentRoom.moveHistory.push({ type: 'pass', color: currentRoom.aiColor });
+              currentRoom.passCount++; currentRoom.moveHistory.push({ type: 'pass', color: currentRoom.aiColor, keyBeforeLast: currentRoom.keyBeforeLast, passCount: currentRoom.passCount });
               currentRoom.turn = currentRoom.aiColor === 1 ? 2 : 1;
               broadcast(currentRoom, { type: 'pass', color: currentRoom.aiColor, turn: currentRoom.turn, board: currentRoom.board.map(row => [...row]) });
               if (currentRoom.passCount >= 2) {
@@ -1266,7 +1266,7 @@ wss.on('connection', (ws) => {
       if (currentRoom.players.some(p => p.grace)) return;
       const myColor = getPlayerColor(currentRoom, ws);
       if (currentRoom.turn !== myColor) return;
-      currentRoom.passCount++; currentRoom.moveHistory.push({ type: 'pass', color: myColor });
+      currentRoom.passCount++; currentRoom.moveHistory.push({ type: 'pass', color: myColor, keyBeforeLast: currentRoom.keyBeforeLast, passCount: currentRoom.passCount });
       currentRoom.turn = myColor === 1 ? 2 : 1;
       broadcast(currentRoom, { type: 'pass', color: myColor, turn: currentRoom.turn, board: currentRoom.board.map(row => [...row]) });
       if (currentRoom.passCount >= 2) {
@@ -1394,12 +1394,18 @@ wss.on('connection', (ws) => {
       if (myColor !== 1 && myColor !== 2) return; // 观战者不可响应
       if (myColor !== (currentRoom.pendingUndo.from === 1 ? 2 : 1)) return;
       if (msg.approve) {
-        let popped = null;
-        for (let i = 0; i < 1 && currentRoom.moveHistory.length > 0; i++) {
-          popped = currentRoom.moveHistory.pop();
-          if (popped.board) currentRoom.board = popped.board.map(row => [...row]);
-          if (popped.goCaptures) currentRoom.goCaptures = [...popped.goCaptures];
-          currentRoom.moveCount--;
+        let popped = 0, undoMoves = 0;
+        while (currentRoom.moveHistory.length > 0) {
+          const last = currentRoom.moveHistory.pop();
+          if (last.board) currentRoom.board = last.board.map(row => [...row]);
+          if (last.goCaptures) currentRoom.goCaptures = [...last.goCaptures];
+          currentRoom.intlLastMove = 'prevIntl' in last ? last.prevIntl : null;
+          if (last.type !== 'pass') undoMoves++;
+          popped++;
+          if (last.color === myColor) break;
+          if (popped >= 4) break;
+        }
+        currentRoom.moveCount = Math.max(0, currentRoom.moveCount - undoMoves);
         }
         currentRoom.undoCount[currentRoom.pendingUndo.from - 1]++;
         currentRoom.turn = currentRoom.pendingUndo.from;
