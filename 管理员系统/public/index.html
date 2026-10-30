@@ -310,10 +310,30 @@ async function refreshRooms() {
   try {
     const rooms = await apiFetch('/api/rooms');
     if (!rooms.length) { el.innerHTML = '<div class="empty-msg">当前没有进行中的对局</div>'; return; }
-    const gameTypeNames = { gomoku: '五子棋', go: '围棋', chess: '中国象棋' };
+    const gameTypeNames = { gomoku: '五子棋', go: '围棋', chess: '中国象棋', intl_chess: '国际象棋' };
     el.innerHTML = rooms.map(r => {
       let miniHtml = '';
-      if (r.gameType === 'chess') {
+      if (r.gameType === 'intl_chess') {
+        const pieces = {K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙',k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'};
+        const cid = 'mi_' + r.id.replace(/[^a-zA-Z0-9]/g,'');
+        miniHtml = `<canvas id="${cid}" width="272" height="272" style="border-radius:4px"></canvas>`;
+        setTimeout(() => {
+          const cv = document.getElementById(cid);
+          if (!cv) return;
+          const cx = cv.getContext('2d');
+          const cw = 34;
+          for (let rr = 0; rr < 8; rr++) for (let cc = 0; cc < 8; cc++) {
+            cx.fillStyle = (rr + cc) % 2 === 0 ? '#f0d9b5' : '#b58863';
+            cx.fillRect(cc * cw, rr * cw, cw, cw);
+          }
+          for (let rr = 0; rr < 8; rr++) for (let cc = 0; cc < 8; cc++) {
+            const p = r.board[rr] && r.board[rr][cc]; if (!p) continue;
+            cx.font = '24px serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+            cx.fillStyle = p === p.toUpperCase() ? '#fff' : '#111';
+            cx.fillText(pieces[p] || p, cc * cw + cw / 2, rr * cw + cw / 2 + 1);
+          }
+        }, 0);
+      } else if (r.gameType === 'chess') {
         const ch = {K:'將',A:'士',B:'象',N:'馬',R:'車',C:'砲',P:'卒',k:'帥',a:'仕',b:'相',n:'馬',r:'車',c:'炮',p:'兵'};
         const cid = 'mc_' + r.id.replace(/[^a-zA-Z0-9]/g,'');
         miniHtml = `<canvas id="${cid}" width="306" height="340" style="border-radius:4px"></canvas>`;
