@@ -1301,7 +1301,7 @@ wss.on('connection', (ws) => {
           if (aiMove) {
             const [aiR, aiC] = aiMove;
             const aiOldKey = boardKey(currentRoom.board);
-            currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures] });
+            currentRoom.moveHistory.push({ type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, board: currentRoom.board.map(row => [...row]), goCaptures: [...currentRoom.goCaptures], keyBeforeLast: currentRoom.keyBeforeLast });
             currentRoom.board[aiR][aiC] = currentRoom.aiColor;
             goRemoveCaptures(currentRoom.board, aiR, aiC, currentRoom.aiColor, currentRoom.size);
             currentRoom.keyBeforeLast = aiOldKey;
@@ -1310,7 +1310,7 @@ wss.on('connection', (ws) => {
             currentRoom.turn = currentRoom.aiColor === 1 ? 2 : 1;
             broadcast(currentRoom, { type: 'move', r: aiR, c: aiC, color: currentRoom.aiColor, turn: currentRoom.turn, lastMove: [aiR, aiC], goCaptures: currentRoom.goCaptures, board: currentRoom.board.map(row => [...row]) });
           } else {
-            currentRoom.passCount++; currentRoom.moveHistory.push({ type: 'pass', color: currentRoom.aiColor });
+            currentRoom.passCount++; currentRoom.moveHistory.push({ type: 'pass', color: currentRoom.aiColor, keyBeforeLast: currentRoom.keyBeforeLast, passCount: currentRoom.passCount });
             currentRoom.turn = currentRoom.aiColor === 1 ? 2 : 1;
             broadcast(currentRoom, { type: 'pass', color: currentRoom.aiColor, turn: currentRoom.turn, board: currentRoom.board.map(row => [...row]) });
             if (currentRoom.passCount >= 2) {
@@ -1365,6 +1365,8 @@ wss.on('connection', (ws) => {
           const last = currentRoom.moveHistory.pop();
           if (last.board) currentRoom.board = last.board.map(row => [...row]);
           if (last.goCaptures) currentRoom.goCaptures = [...last.goCaptures];
+          if ('passCount' in last) currentRoom.passCount = last.type === 'pass' ? Math.max(0, last.passCount - 1) : 0;
+          if ('keyBeforeLast' in last) currentRoom.keyBeforeLast = last.keyBeforeLast;
           currentRoom.intlLastMove = 'prevIntl' in last ? last.prevIntl : null;
           if (last.type !== 'pass') undoMoves++;
           popped++;
@@ -1375,7 +1377,6 @@ wss.on('connection', (ws) => {
         currentRoom.undoCount[myColor - 1]++;
         currentRoom.turn = myColor;
         currentRoom.lastMove = null;
-        currentRoom.keyBeforeLast = null;
         currentRoom.pendingUndo = null;
         currentRoom.ply++; // 作废挂起的 AI 回调
         broadcast(currentRoom, { type: 'undo_approved', turn: currentRoom.turn, board: currentRoom.board, moveCount: currentRoom.moveCount });
@@ -1394,24 +1395,24 @@ wss.on('connection', (ws) => {
       if (myColor !== 1 && myColor !== 2) return; // 观战者不可响应
       if (myColor !== (currentRoom.pendingUndo.from === 1 ? 2 : 1)) return;
       if (msg.approve) {
+        const from = currentRoom.pendingUndo.from;
+        // 撤到请求方自己的上一步为止，避免请求方连走两手
         let popped = 0, undoMoves = 0;
         while (currentRoom.moveHistory.length > 0) {
           const last = currentRoom.moveHistory.pop();
           if (last.board) currentRoom.board = last.board.map(row => [...row]);
           if (last.goCaptures) currentRoom.goCaptures = [...last.goCaptures];
+          if ('passCount' in last) currentRoom.passCount = last.type === 'pass' ? Math.max(0, last.passCount - 1) : 0;
+          if ('keyBeforeLast' in last) currentRoom.keyBeforeLast = last.keyBeforeLast;
           currentRoom.intlLastMove = 'prevIntl' in last ? last.prevIntl : null;
           if (last.type !== 'pass') undoMoves++;
           popped++;
-          if (last.color === myColor) break;
-          if (popped >= 4) break;
+          if (last.color === from || popped >= 4) break;
         }
         currentRoom.moveCount = Math.max(0, currentRoom.moveCount - undoMoves);
-        }
-        currentRoom.undoCount[currentRoom.pendingUndo.from - 1]++;
-        currentRoom.turn = currentRoom.pendingUndo.from;
+        currentRoom.undoCount[from - 1]++;
+        currentRoom.turn = from;
         currentRoom.lastMove = null;
-        currentRoom.keyBeforeLast = null;
-        if (popped) currentRoom.intlLastMove = 'prevIntl' in popped ? popped.prevIntl : null;
         currentRoom.ply++; // 作废挂起的 AI 回调
         broadcast(currentRoom, { type: 'undo_approved', turn: currentRoom.turn, board: currentRoom.board, moveCount: currentRoom.moveCount });
       } else {
@@ -1517,13 +1518,15 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'chat', color: 0, text: '系统：你已被临时禁言，请稍后再试' }));
         return;
       }
-      let text = String(msg.text || '').substring(0, 200);
-      const filteredText = filterSensitive(text);
-      const filtered = filteredText !== text;
-      if (filtered) addViolation(username);
-      if (filtered) ws.send(JSON.stringify({ type: 'chat', color: 0, text: '系统：消息包含敏感词，已过滤处理' }));
-      await ChatLog.create({ id: genId(), roomId: currentRoom.id, username, color: chatColor, text: filteredText, filtered, time: new Date().toISOString() });
-      broadcast(currentRoom, { type: 'chat', color: chatColor, text: filteredText, name: username });
+  try {
+        let text = String(msg.text || '').substring(0, 200);
+        const filteredText = filterSensitive(text);
+        const filtered = filteredText !== text;
+        if (filtered) addViolation(username);
+        if (filtered) ws.send(JSON.stringify({ type: 'chat', color: 0, text: '系统：消息包含敏感词，已过滤处理' }));
+        await ChatLog.create({ id: genId(), roomId: currentRoom.id, username, color: chatColor, text: filteredText, filtered, time: new Date().toISOString() });
+        broadcast(currentRoom, { type: 'chat', color: chatColor, text: filteredText, name: username });
+      } catch (e) { console.error('聊天消息处理错误:', e.message); }
     }
     } catch (e) { console.error('消息处理错误:', e.message); }
   });
