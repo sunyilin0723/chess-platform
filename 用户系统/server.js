@@ -102,7 +102,7 @@ function createRoom(roomId, gameType, timerSeconds, mode, difficulty, forbidden)
     pendingUndo: null, pendingDraw: null,
     timerSeconds: timerSeconds || 0, timeLeft: [timerSeconds || 0, timerSeconds || 0],
     timerInterval: null, gameOver: false, passCount: 0, lastMove: null,
-    goCaptures: [0, 0], mode: mode || 'pvp', difficulty: difficulty || 'easy', aiColor: 0,
+    goCaptures: [0, 0], mode: mode || 'pvp', difficulty: difficulty || 'easy', aiLevel: difficulty === 'dynamic' ? null : (difficulty || 'easy'), aiColor: 0,
     forbidden: forbidden || false,
     intlLastMove: null,
     keyBeforeLast: null, // 简单劫：上一手落子前的棋盘指纹
@@ -248,7 +248,7 @@ function resetRoomState(room) {
 }
 
 // 玩家加入房间（对局）
-function joinAsPlayer(ws, room, name, token) {
+async function joinAsPlayer(ws, room, name, token) {
   // 同一连接重复 join：先移除旧条目，避免一人控制双方
   room.players = room.players.filter(p => p.ws !== ws);
   // 清理断线死连接（保留 AI 条目 ws:null 与断线宽限座位）
@@ -288,7 +288,8 @@ function joinAsPlayer(ws, room, name, token) {
   if (room.mode === 'pve' && humanCount === 1 && !room.players.some(p => p.isAI) && !room.started) {
     const aiColor = color === 1 ? 2 : 1;
     room.aiColor = aiColor;
-    room.names[aiColor] = 'AI (' + (room.difficulty === 'easy' ? '简单' : room.difficulty === 'medium' ? '普通' : '困难') + ')';
+    await resolveAiLevel(room); // 动态Elo：按玩家积分每100分一档设置
+    room.names[aiColor] = aiNameOf(room.aiLevel);
     room.players.push({ ws: null, color: aiColor, isAI: true });
     room.started = true; room.choosing = true;
     broadcast(room, { type: 'names', names: room.names, gameType: room.gameType });
@@ -309,14 +310,38 @@ function joinAsPlayer(ws, room, name, token) {
 // ==================== Elo 天梯 ====================
 const AI_RATINGS = { '简单': 800, '普通': 1200, '困难': 1600 };
 function aiRatingOf(name) {
-  const m = /^AI \((简单|普通|困难)\)$/.exec(name || '');
-  return m ? AI_RATINGS[m[1]] : null;
+  const m = /^AI \((简单|普通|困难|\d+)\)$/.exec(name || '');
+  if (!m) return null;
+  return m[1] === '简单' || m[1] === '普通' || m[1] === '困难' ? AI_RATINGS[m[1]] : Number(m[1]); // 数字 = 动态档虚拟分
 }
 function eloDelta(ra, rb, score, k = 32) {
   return Math.round(k * (score - 1 / (1 + Math.pow(10, (rb - ra) / 400))));
 }
 function getRating(doc, gameType) {
   return (doc && doc.ratings && typeof doc.ratings[gameType] === 'number') ? doc.ratings[gameType] : 1200;
+}
+
+// 动态Elo：按玩家当前积分每100分一档自动设置 AI（深度分三段、噪声逐档递减），每开新一局重新评估
+const AI_LEVEL_NAMES = { easy: '简单', medium: '普通', hard: '困难' };
+const aiNameOf = (aiLevel) => (aiLevel && typeof aiLevel === 'object')
+  ? 'AI (' + aiLevel.rating + ')'
+  : 'AI (' + (AI_LEVEL_NAMES[aiLevel] || '普通') + ')';
+// 区间下界 b∈[600,1800]：depth 按 1000/1400 分段（与原三档中点一致），noise 每降100分减一档
+function dynAiProfile(r) {
+  const b = Math.min(1800, Math.max(600, Math.floor(r / 100) * 100));
+  let depth, noise;
+  if (b < 1000) { depth = 1; noise = 40 - (b - 600) / 100 * 5; }        // 600→40 … 900→25
+  else if (b < 1400) { depth = 2; noise = 20 - (b - 1000) / 100 * 5; }  // 1000→20 … 1300→5
+  else { depth = 3; noise = 15 - (b - 1400) / 100 * 4; }                // 1400→15 … 1800→-1
+  return { depth, noise: Math.max(0, noise), rating: b };
+}
+async function resolveAiLevel(room) {
+  if (room.difficulty !== 'dynamic') { room.aiLevel = room.aiLevel || room.difficulty || 'easy'; return; }
+  const human = room.players.find(p => !p.isAI);
+  const humanName = human ? room.names[human.color] : '';
+  let r = 1200;
+  if (humanName) r = getRating(await User.findOne({ username: humanName }).select('ratings').lean(), room.gameType);
+  room.aiLevel = dynAiProfile(r);
 }
 
 async function recordGame(winnerName, loserName, totalMoves, moves, gameType) {
@@ -808,10 +833,10 @@ wss.on('connection', (ws) => {
         const roomFull = room.players.length >= 2;
         if (msg.mode === 'pve') {
           rooms.set(roomId, room);
-          joinAsPlayer(ws, room, name, msg.token);
+          await joinAsPlayer(ws, room, name, msg.token);
         } else if (msg.autoMode === 'play' && !roomFull) {
           rooms.set(roomId, room);
-          joinAsPlayer(ws, room, name, msg.token);
+          await joinAsPlayer(ws, room, name, msg.token);
         } else if (msg.autoMode === 'spectate') {
           rooms.set(roomId, room);
           joinAsSpectator(ws, room, name);
@@ -834,7 +859,7 @@ wss.on('connection', (ws) => {
         if (msg.action === 'spectate') {
           joinAsSpectator(ws, room, pj.name);
         } else {
-          joinAsPlayer(ws, room, pj.name, pj.token);
+          await joinAsPlayer(ws, room, pj.name, pj.token);
         }
         return;
       }
@@ -859,6 +884,14 @@ wss.on('connection', (ws) => {
         broadcast(room, { type: 'names', names: room.names, gameType: room.gameType });
         if (room.mode === 'pve' && room.aiColor) {
           room.aiColor = room.aiColor === 1 ? 2 : 1;
+        }
+      }
+      // 动态Elo：每局开局按玩家当前积分重新定档（含换边后）
+      if (room.mode === 'pve' && room.difficulty === 'dynamic') {
+        await resolveAiLevel(room);
+        if (room.aiColor) {
+          room.names[room.aiColor] = aiNameOf(room.aiLevel);
+          broadcast(room, { type: 'names', names: room.names, gameType: room.gameType });
         }
       }
       room.turn = 1; room.moveCount = 0;
@@ -924,7 +957,7 @@ wss.on('connection', (ws) => {
         const gen = room.ply;
         setTimeout(() => {
           if (room.gameOver || room.ply !== gen || room.turn !== room.aiColor) return;
-          const aiMove = intlGetAIMove(room.board, room.difficulty, room.intlLastMove, room.aiColor);
+          const aiMove = intlGetAIMove(room.board, room.aiLevel || room.difficulty, room.intlLastMove, room.aiColor);
           if (aiMove) {
             const { fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial } = aiMove;
             const aiSaved = room.board.map(row => [...row]);
@@ -1225,7 +1258,7 @@ wss.on('connection', (ws) => {
             const gen = currentRoom.ply;
             setTimeout(() => {
               if (currentRoom.gameOver || currentRoom.ply !== gen || currentRoom.turn !== currentRoom.aiColor) return;
-              const aiMove = intlGetAIMove(currentRoom.board, currentRoom.difficulty, currentRoom.intlLastMove, currentRoom.aiColor);
+              const aiMove = intlGetAIMove(currentRoom.board, currentRoom.aiLevel || currentRoom.difficulty, currentRoom.intlLastMove, currentRoom.aiColor);
               if (aiMove) {
                 const { fr: aiFr, fc: aiFc, tr: aiTr, tc: aiTc, special: aiSpecial } = aiMove;
                 const aiSaved = currentRoom.board.map(row => [...row]);

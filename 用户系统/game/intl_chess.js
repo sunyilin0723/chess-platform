@@ -434,11 +434,17 @@ function intlUndoMove(board, undo) {
   }
 }
 
-// AI走棋
+// AI走棋：difficulty 为档位字符串（easy/medium/hard）或动态Elo配置 { depth, noise }
 function intlGetAIMove(board, difficulty, lastMove, aiColor) {
   const color = aiColor || 2;
-  const depths = { easy: 1, medium: 2, hard: 3 };
-  const depth = depths[difficulty] || 1;
+  let depth, noise;
+  if (difficulty && typeof difficulty === 'object') {
+    depth = difficulty.depth || 1;
+    noise = difficulty.noise || 0;
+  } else {
+    depth = { easy: 1, medium: 2, hard: 3 }[difficulty] || 1;
+    noise = difficulty === 'easy' ? 20 : 0;
+  }
 
   const moves = intlGetAllLegalMoves(board, color, lastMove);
   if (moves.length === 0) return null;
@@ -453,7 +459,7 @@ function intlGetAIMove(board, difficulty, lastMove, aiColor) {
     const score = intlMinimaxForColor(board, depth - 1, -Infinity, Infinity, opponent, color, newLastMove);
     intlUndoMove(board, undo);
 
-    const randomFactor = difficulty === 'easy' ? (Math.random() * 40 - 20) : 0;
+    const randomFactor = noise > 0 ? (Math.random() * 2 * noise - noise) : 0;
     if (score + randomFactor > bestScore) {
       bestScore = score + randomFactor;
       bestMove = { fr, fc, tr, tc, special };

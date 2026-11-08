@@ -274,6 +274,15 @@ function selectGame(type,btn){
     if(type==='gomoku')forbidden.classList.remove('hidden');
     else forbidden.classList.add('hidden');
   }
+  // 动态难度仅国际象棋提供；切走时若正选中动态则回退到简单
+  const dyn=document.getElementById('dynamic-diff-btn');
+  if(dyn){
+    dyn.style.display=type==='intl_chess'?'':'none';
+    if(type!=='intl_chess'&&selectedDifficulty==='dynamic'){
+      const easyBtn=document.querySelector('#ai-difficulty button');
+      if(easyBtn)selectDifficulty('easy',easyBtn);
+    }
+  }
 }
 function moveSliderIndicator(index){
   if(index<0)index=0;

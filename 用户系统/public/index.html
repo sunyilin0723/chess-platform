@@ -98,6 +98,7 @@
         <button class="selected" onclick="selectDifficulty('easy',this)">简单</button>
         <button onclick="selectDifficulty('medium',this)">普通</button>
         <button onclick="selectDifficulty('hard',this)">困难</button>
+        <button id="dynamic-diff-btn" style="display:none" title="动态Elo：按你的积分每100分一档自动设置AI强度" onclick="selectDifficulty('dynamic',this)">动态</button>
       </div>
       <div id="forbidden-select" class="hidden">
         <span>禁手规则：</span>
@@ -298,7 +299,7 @@
   </div>
 </div>
 
-<script src="game.js?v=14"></script>
+<script src="game.js?v=15"></script>
 <script src="game2.js?v=16"></script>
 <script src="game3.js?v=16"></script>
 </body>
