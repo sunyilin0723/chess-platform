@@ -249,7 +249,7 @@ async function adminLogin() {
   const password = document.getElementById('admin-password').value;
   if (!username || !password) { document.getElementById('login-error').textContent = '请输入用户名和密码'; return; }
   try {
-    const res = await fetch('/api/login', {
+    const res = await fetch('/admin/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password })
@@ -308,7 +308,7 @@ async function apiFetch(path, opts) {
 async function refreshRooms() {
   const el = document.getElementById('rooms-content');
   try {
-    const rooms = await apiFetch('/api/rooms');
+    const rooms = await apiFetch('/admin/api/rooms');
     if (!rooms.length) { el.innerHTML = '<div class="empty-msg">当前没有进行中的对局</div>'; return; }
     const gameTypeNames = { gomoku: '五子棋', go: '围棋', chess: '中国象棋', intl_chess: '国际象棋' };
     el.innerHTML = rooms.map(r => {
@@ -398,7 +398,7 @@ async function refreshRooms() {
 
 async function markUser(username, reason) {
   if (!confirm(`确定标记 ${username} 为${reportTypeNames[reason]}？`)) return;
-  await apiFetch('/api/mark', { method: 'POST', body: JSON.stringify({ username, reason }) });
+  await apiFetch('/admin/api/mark', { method: 'POST', body: JSON.stringify({ username, reason }) });
   alert('已标记');
   refreshRooms();
 }
@@ -407,7 +407,7 @@ async function refreshGameLog() {
   const el = document.getElementById('gamelog-content');
   const days = document.getElementById('gamelog-days').value;
   try {
-    const data = await apiFetch('/api/game-log?days=' + days);
+    const data = await apiFetch('/admin/api/game-log?days=' + days);
     if (!data.games || !data.games.length) { el.innerHTML = '<div class="empty-msg">近' + days + '天暂无对局记录</div>'; return; }
     gameData = data.games; // 保存数据供回放使用
     const gameTypeNames = { gomoku: '五子棋', go: '围棋', chess: '象棋', intl_chess: '国际象棋' };
@@ -716,7 +716,7 @@ async function refreshChatLog() {
   const room = document.getElementById('chatlog-room').value.trim();
   const user = document.getElementById('chatlog-user').value.trim();
   try {
-    let url = '/api/admin/chat-logs?days=' + days;
+    let url = '/admin/api/admin/chat-logs?days=' + days;
     if (room) url += '&room=' + encodeURIComponent(room);
     if (user) url += '&username=' + encodeURIComponent(user);
     const data = await apiFetch(url);
@@ -743,13 +743,13 @@ async function refreshChatLog() {
 async function refreshReports() {
   const el = document.getElementById('reports-content');
   try {
-    const reports = await apiFetch('/api/reports');
+    const reports = await apiFetch('/admin/api/reports');
     if (!reports.length) { el.innerHTML = '<div class="empty-msg">暂无待审核举报</div>'; return; }
     el.innerHTML = reports.map(r => `<div class="report-card">
       <div class="report-header"><span class="target">${r.target}</span><span class="time">${new Date(r.time).toLocaleString('zh-CN')}</span></div>
       <div class="report-body">举报人：${r.reporter} | 类型：${reportTypeNames[r.reasonType] || r.reasonType}</div>
       ${r.reason !== r.reasonType ? `<div class="report-body">说明：${r.reason}</div>` : ''}
-      ${r.screenshot ? `<div style="margin:8px 0;"><img src="http://localhost:3002/${r.screenshot}" style="max-width:100%;max-height:300px;border-radius:6px;border:1px solid #333;cursor:pointer;" onclick="window.open(this.src,'_blank')"></div>` : '<div class="report-body" style="color:#e74c3c;">未上传截图</div>'}
+      ${r.screenshot ? `<div style="margin:8px 0;"><img src="/${r.screenshot}" style="max-width:100%;max-height:300px;border-radius:6px;border:1px solid #333;cursor:pointer;" onclick="window.open(this.src,'_blank')"></div>` : '<div class="report-body" style="color:#e74c3c;">未上传截图</div>'}
       <div class="report-actions">
         <button class="btn-approve" onclick="approveReport('${r.id}')">确认违规</button>
         <button class="btn-reject" onclick="rejectReport('${r.id}')">驳回</button>
@@ -761,14 +761,14 @@ async function refreshReports() {
 
 async function approveReport(id) {
   try {
-    const r = await apiFetch('/api/report/approve', { method: 'POST', body: JSON.stringify({ reportId: id }) });
+    const r = await apiFetch('/admin/api/report/approve', { method: 'POST', body: JSON.stringify({ reportId: id }) });
     if (r.error) { alert(r.error); return; }
     refreshReports();
   } catch(e) { alert('操作失败: ' + e.message); }
 }
 async function rejectReport(id) {
   try {
-    const r = await apiFetch('/api/report/reject', { method: 'POST', body: JSON.stringify({ reportId: id }) });
+    const r = await apiFetch('/admin/api/report/reject', { method: 'POST', body: JSON.stringify({ reportId: id }) });
     if (r.error) { alert(r.error); return; }
     refreshReports();
   } catch(e) { alert('操作失败: ' + e.message); }
@@ -778,7 +778,7 @@ const appealStatusNames = { pending: '待审核', approved: '已解封', rejecte
 async function refreshAppeals() {
   const el = document.getElementById('appeals-content');
   try {
-    const appeals = await apiFetch('/api/appeals');
+    const appeals = await apiFetch('/admin/api/appeals');
     if (!appeals.length) { el.innerHTML = '<div class="empty-msg">暂无待审核申诉</div>'; return; }
     el.innerHTML = appeals.map(a => `<div class="report-card">
       <div class="report-header"><span class="target">${a.username}</span><span class="time">${new Date(a.time).toLocaleString('zh-CN')}</span></div>
@@ -793,14 +793,14 @@ async function refreshAppeals() {
 }
 async function approveAppeal(id) {
   try {
-    const r = await apiFetch('/api/appeal/approve', { method: 'POST', body: JSON.stringify({ appealId: id }) });
+    const r = await apiFetch('/admin/api/appeal/approve', { method: 'POST', body: JSON.stringify({ appealId: id }) });
     if (r.error) { alert(r.error); return; }
     refreshAppeals();
   } catch(e) { alert('操作失败: ' + e.message); }
 }
 async function rejectAppeal(id) {
   try {
-    const r = await apiFetch('/api/appeal/reject', { method: 'POST', body: JSON.stringify({ appealId: id }) });
+    const r = await apiFetch('/admin/api/appeal/reject', { method: 'POST', body: JSON.stringify({ appealId: id }) });
     if (r.error) { alert(r.error); return; }
     refreshAppeals();
   } catch(e) { alert('操作失败: ' + e.message); }
@@ -817,7 +817,7 @@ async function searchUser() {
   if (!name) return;
   const el = document.getElementById('user-detail');
   try {
-    const u = await apiFetch('/api/user/' + encodeURIComponent(name));
+    const u = await apiFetch('/admin/api/user/' + encodeURIComponent(name));
     const banHtml = u.banned ? `<span class="ban-badge">已封禁${u.banInfo.permanent ? '(永久)' : '('+u.banInfo.daysLeft+'天)'}</span>` : '';
     let reportsHtml = '';
     if (u.reports && u.reports.length) {
@@ -852,7 +852,7 @@ async function searchUser() {
 async function forceDelete(username) {
   if (!confirm(`确定要彻底删除用户 "${username}" 的所有数据？此操作不可撤销！`)) return;
   try {
-    const r = await apiFetch('/api/force-delete', { method: 'POST', body: JSON.stringify({ username }) });
+    const r = await apiFetch('/admin/api/force-delete', { method: 'POST', body: JSON.stringify({ username }) });
     if (r.error) { alert(r.error); return; }
     alert('用户已彻底删除');
     document.getElementById('user-detail').innerHTML = '';
@@ -873,7 +873,7 @@ async function refreshAdmins() {
     noPermission.style.display = 'block';
   }
   try {
-    const admins = await apiFetch('/api/admins');
+    const admins = await apiFetch('/admin/api/admins');
     el.innerHTML = admins.map(a => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#0d1b3e;border-radius:6px;margin-bottom:6px;">
         <div>
@@ -892,7 +892,7 @@ async function addAdmin() {
   const msgEl = document.getElementById('admin-msg');
   if (!username) { msgEl.textContent = '请输入用户名'; msgEl.style.color = '#e74c3c'; return; }
   try {
-    const r = await apiFetch('/api/admins/add', { method: 'POST', body: JSON.stringify({ username }) });
+    const r = await apiFetch('/admin/api/admins/add', { method: 'POST', body: JSON.stringify({ username }) });
     if (r.error) { msgEl.textContent = r.error; msgEl.style.color = '#e74c3c'; return; }
     msgEl.textContent = r.msg;
     msgEl.style.color = '#2ecc71';
@@ -904,7 +904,7 @@ async function addAdmin() {
 async function deleteAdmin(username) {
   if (!confirm(`确定要删除管理员 "${username}"？`)) return;
   try {
-    const r = await apiFetch('/api/admins/delete', { method: 'POST', body: JSON.stringify({ username }) });
+    const r = await apiFetch('/admin/api/admins/delete', { method: 'POST', body: JSON.stringify({ username }) });
     if (r.error) { alert(r.error); return; }
     refreshAdmins();
   } catch (e) { alert(e.message); }
@@ -914,7 +914,7 @@ async function deleteAdmin(username) {
 async function refreshFeedbacks() {
   const el = document.getElementById('feedbacks-content');
   try {
-    const list = await apiFetch('/api/feedbacks');
+    const list = await apiFetch('/admin/api/feedbacks');
     if (!list.length) { el.innerHTML = '<div class="empty-msg">暂无用户反馈</div>'; return; }
     el.innerHTML = list.map(fb => {
       const time = new Date(fb.time).toLocaleString('zh-CN');
@@ -944,7 +944,7 @@ async function replyFeedback(feedbackId) {
   const reply = input.value.trim();
   if (!reply) { alert('请输入回复内容'); return; }
   try {
-    const r = await apiFetch('/api/feedback/reply', { method: 'POST', body: JSON.stringify({ feedbackId, reply }) });
+    const r = await apiFetch('/admin/api/feedback/reply', { method: 'POST', body: JSON.stringify({ feedbackId, reply }) });
     if (r.error) { alert(r.error); return; }
     alert('回复成功，已通知用户');
     refreshFeedbacks();
@@ -977,7 +977,7 @@ async function broadcastSearchUsers() {
   const listEl = document.getElementById('broadcast-search-list');
   if (!q) { listEl.style.display = 'none'; listEl.innerHTML = ''; return; }
   try {
-    const r = await apiFetch('/api/search-users?q=' + encodeURIComponent(q));
+    const r = await apiFetch('/admin/api/search-users?q=' + encodeURIComponent(q));
     if (!r.list || !r.list.length) { listEl.innerHTML = '<div style="padding:10px;color:#888;font-size:13px;">无匹配用户</div>'; listEl.style.display = 'block'; return; }
     listEl.innerHTML = r.list.map(u => `<div data-u="${u.username}" onclick="broadcastPickUser(this.getAttribute('data-u'))" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #333;">${u.username}</div>`).join('');
     listEl.style.display = 'block';
@@ -1011,7 +1011,7 @@ async function sendBroadcast() {
   if (mode === 'target' && !broadcastRecipient) { msgEl.style.color = '#e74c3c'; msgEl.textContent = '请先搜索并选择收件人'; return; }
   msgEl.textContent = '发送中…'; msgEl.style.color = '#888';
   try {
-    const r = await apiFetch('/api/broadcast', {
+    const r = await apiFetch('/admin/api/broadcast', {
       method: 'POST',
       body: JSON.stringify({ content, username: mode === 'target' ? broadcastRecipient : '' })
     });

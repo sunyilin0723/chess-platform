@@ -1610,13 +1610,17 @@ function adminAuth(req, res, next) {
   next();
 }
 
-app.get('/api/admin/rooms', adminAuth, (req, res) => {
+// 实时对局列表（供管理端 /admin/api/rooms 与本路由共用）
+function listRooms() {
   const list = [];
   for (const [id, room] of rooms) {
     if (room.players.length === 0) continue;
     list.push({ id, gameType: room.gameType, moveCount: room.moveCount, turn: room.turn, started: room.started, gameOver: room.gameOver, size: room.size, names: { 1: room.names[1] || '等待中', 2: room.names[2] || '等待中' }, board: room.board.map(row => [...row]) });
   }
-  res.json(list);
+  return list;
+}
+app.get('/api/admin/rooms', adminAuth, (req, res) => {
+  res.json(listRooms());
 });
 
 app.get('/api/admin/deleted-users', adminAuth, async (req, res) => {
@@ -1658,18 +1662,17 @@ app.post('/api/admin/force-delete', adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// 管理员广播：定向 username 或全员；写库 + 在线实时推送
-app.post('/api/admin/notify', adminAuth, async (req, res) => {
-  const { content, username } = req.body || {};
-  if (!content || !String(content).trim()) return res.status(400).json({ error: '请填写通知内容' });
+// 管理员广播核心逻辑（本路由与管理端 /admin/api/broadcast 共用）：校验失败 throw {status,message}
+async function sendBroadcast(content, username) {
+  if (!content || !String(content).trim()) { const e = new Error('请填写通知内容'); e.status = 400; throw e; }
   const trimmed = String(content).trim();
-  if (trimmed.length > 200) return res.status(400).json({ error: '通知内容不能超过200字' });
+  if (trimmed.length > 200) { const e = new Error('通知内容不能超过200字'); e.status = 400; throw e; }
   const filtered = filterSensitive(trimmed);
   if (username) {
     const user = await User.findOne({ username, deletedAt: null });
-    if (!user) return res.status(400).json({ error: '用户不存在或已注销' });
+    if (!user) { const e = new Error('用户不存在或已注销'); e.status = 400; throw e; }
     await pushNotif(username, '管理员通知', filtered);
-    return res.json({ ok: true, count: 1 });
+    return { ok: true, count: 1 };
   }
   // 全员：分批写库，避免一次性并发过高
   const users = await User.find({ deletedAt: null }).select('username').lean();
@@ -1679,13 +1682,27 @@ app.post('/api/admin/notify', adminAuth, async (req, res) => {
     await Promise.all(batch.map(u => pushNotif(u.username, '管理员通知', filtered)));
     count += batch.length;
   }
-  res.json({ ok: true, count });
+  return { ok: true, count };
+}
+
+// 管理员广播：定向 username 或全员；写库 + 在线实时推送
+app.post('/api/admin/notify', adminAuth, async (req, res) => {
+  const { content, username } = req.body || {};
+  try {
+    res.json(await sendBroadcast(content, username));
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
+
+// ==================== 管理后台（/admin 挂载） ====================
+// 必须在 SPA 回退之前注册；deps 提供实时对局与广播的进程内直调
+require('../管理员系统/server')(app, { listRooms, sendBroadcast });
 
 // ==================== SPA 路由回退 ====================
 // /home、/leaderboard、/profile 等前端路由直接访问/刷新时返回 index.html
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/')) return next();
+  if (req.path.startsWith('/api/') || req.path.startsWith('/admin')) return next();
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

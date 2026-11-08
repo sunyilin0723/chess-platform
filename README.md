@@ -58,7 +58,7 @@
 - 心跳检测（30秒ping）
 - 断线自动重连（最多5次，指数退避）
 - HTML转义防XSS攻击
-- 环境变量配置敏感信息（含 `ADMIN_KEY` 跨服务认证密钥）
+- 环境变量配置敏感信息（含 `ADMIN_KEY` 管理接口密钥）
 - 管理后台API全鉴权保护
 - 观战者权限隔离：服务端校验玩家身份（color 1/2），观战者不可走棋/悔棋/求和/认输/重开
 - 静态资源禁用缓存（no-cache headers），HTML用 `?v=N` 版本号控缓存
@@ -71,7 +71,7 @@
 - 用户查询
 - 管理员管理（主管理员/普通管理员权限）
 - 反馈管理（仅主管理员，可回复并通知用户）
-- 广播通知（仅主管理员：全员或定向指定成员，支持成员搜索；在线用户实时收到，游戏服不可达时降级离线写入）
+- 广播通知（仅主管理员：全员或定向指定成员，支持成员搜索；进程内直调游戏服，写库并在线实时推送）
 
 ### 界面特性
 - 深色/浅色主题切换
@@ -108,11 +108,8 @@ npm install
 仓库不含 `.env`（已被 `.gitignore` 忽略）。在项目根目录**新建**一个 `.env` 文件，填入以下内容：
 
 ```env
-# 游戏服务器端口
+# 游戏服务器端口（管理后台已合并进游戏服，走 /admin 路径，无需单独端口）
 GAME_PORT=3002
-
-# 管理后台端口
-ADMIN_PORT=3003
 
 # MongoDB连接地址
 MONGO_URI=mongodb://localhost:27017/gomoku
@@ -121,7 +118,7 @@ MONGO_URI=mongodb://localhost:27017/gomoku
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin123
 
-# 管理员API密钥（游戏服务器与管理服务器必须一致，否则管理后台看不到实时对局）
+# 管理接口密钥（游戏服 /api/admin/* 接口鉴权用；管理后台已进程内直调，不再依赖它）
 ADMIN_KEY=your-secret-key
 
 # Cloudflare Turnstile（注册/举报/反馈人机验证）
@@ -131,7 +128,7 @@ TURNSTILE_SITE_KEY=your-site-key
 TURNSTILE_SECRET_KEY=your-secret-key
 
 # 站点对外访问地址（可选，不带端口，如 https://chess.example.com，留空则仅 localhost）
-# 用户端通过域名或 localhost 均可访问；管理后台会同时尝试 localhost 与该地址连接游戏服
+# 用户端通过域名或 localhost 均可访问
 SITE_URL=
 
 # Cloudflare Origin Certificate（可选）：配置后游戏服务器在 443 直接提供 HTTPS
@@ -141,27 +138,22 @@ SSL_CERT_PATH=certs/origin.pem
 SSL_KEY_PATH=certs/origin.key
 ```
 
-> **注意**：`ADMIN_KEY` 必须在 `.env` 中配置且两边一致。若未配置，游戏服务器每次重启会生成随机密钥，导致管理后台认证失败。
+> **注意**：管理后台已合并进游戏服（单进程），随游戏服一起启动即可；`ADMIN_KEY` 仅用于游戏服 `/api/admin/*` 接口的外部鉴权，管理后台不再依赖它。
 
 ### 3. 启动服务
 
-**终端1 - 游戏服务器：**
+管理后台已合并进游戏服，只需启动一个进程：
+
 ```bash
 cd 用户系统
-node server.js
-```
-
-**终端2 - 管理后台：**
-```bash
-cd 管理员系统
 node server.js
 ```
 
 ### 4. 访问网站
 
 - **配置指南**：双击项目根目录的 `Welcome.html` 查看（环境要求 / .env 字段说明 / 启动命令 / 常见问题）
-- 本地开发：游戏平台 http://localhost:3002 ｜ 管理后台 http://localhost:3003
-- 公网部署：反向代理转发到 3002 后，**直接访问域名即可，无需加 `:3002`**（如 https://chess.example.com）；WebSocket 连接用 `location.host`，跟随当前域名与端口
+- 本地开发：游戏平台 http://localhost:3002 ｜ 管理后台 http://localhost:3002/admin
+- 公网部署：反向代理转发到游戏端口后，**直接访问域名即可，无需加端口**（如 https://chess.example.com，管理后台为 https://chess.example.com/admin）；WebSocket 连接用 `location.host`，跟随当前域名与端口
 
 ### 前端路由
 
@@ -173,7 +165,7 @@ node server.js
 | `/game` | 对局中（刷新后回大厅，对局需 WS 无法从 URL 还原） |
 | `/login` | 登录/注册 |
 
-支持直接访问、刷新、浏览器前进/后退；未登录访问受保护路由会跳转登录页。服务端对非 `/api` 的 GET 请求回退返回 `index.html`（反向代理无需额外配置）。
+支持直接访问、刷新、浏览器前进/后退；未登录访问受保护路由会跳转登录页。服务端对非 `/api`、非 `/admin` 的 GET 请求回退返回 `index.html`（反向代理无需额外配置）。
 
 ### HTTPS（可选：Cloudflare Origin Certificate）
 
@@ -182,7 +174,7 @@ node server.js
 1. Cloudflare 控制台 → SSL/TLS → Origin Server → Create Certificate，把 Origin Certificate 全文存为 `certs/origin.pem`、Private Key 全文存为 `certs/origin.key`（项目根目录，与 `.env` 同级）
 2. `.env` 填 `SSL_CERT_PATH=certs/origin.pem`、`SSL_KEY_PATH=certs/origin.key`，重启游戏服务器，日志出现 `[ssl] 已加载 Origin 证书` 即生效
 3. Cloudflare 后台 SSL/TLS 加密模式选 **Full (strict)**（Origin 证书只用于 Cloudflare ↔ 源站这一段）
-4. `SITE_URL` 填 `https://你的域名`，管理后台优先通过该地址连接游戏服
+4. `SITE_URL` 填 `https://你的域名`（管理后台已进程内直调，该地址仅作对外访问参考）
 
 未配置证书时自动回退 HTTP（本地开发无需配置）。证书与私钥已在 `.gitignore`（`certs/`、`*.pem`、`*.key`），**不要提交进 git**。
 
@@ -212,8 +204,8 @@ node server.js
 │   │   ├── game2.js              # WebSocket通信、断线重连
 │   │   └── game3.js              # 棋盘渲染、通知/私信、对局记录
 │   └── package.json
-├── 管理员系统/                   # 管理后台 (端口3003)
-│   ├── server.js                 # 管理API、管理员模型
+├── 管理员系统/                   # 管理后台（已合并进游戏服，挂 /admin）
+│   ├── server.js                 # 导出 registerAdmin(app, deps)，由游戏服挂载
 │   ├── public/
 │   │   └── index.html            # 管理界面（登录、监控、审核、棋盘回放）
 │   └── package.json
@@ -247,6 +239,8 @@ node server.js
 ---
 
 ## 管理员系统
+
+> 已合并进游戏服单进程：管理端页面挂 `/admin`（如 `http://localhost:3002/admin`、`https://域名/admin`），API 挂 `/admin/api/*`，由 `管理员系统/server.js` 导出 `registerAdmin(app, deps)` 供游戏服挂载。
 
 ### 权限说明
 
@@ -400,7 +394,7 @@ node server.js
 ## 注意事项
 
 1. 首次启动会自动创建主管理员（从`.env`读取）；已存在时同步密码（不会清空其他管理员）
-2. **`.env` 必须配置 `ADMIN_KEY`**，游戏服务器与管理服务器共用，否则管理后台看不到实时对局
+2. 管理后台已合并进游戏服（单进程，`/admin` 路径）；`ADMIN_KEY` 仅用于游戏服 `/api/admin/*` 接口的外部鉴权
 3. 聊天记录默认保留15天
 4. 五子棋禁手只对黑棋（先手）生效，AI在禁手模式下会主动规避禁手点，AI触发禁手也会判负
 5. 人机对战退出后房间会自动删除

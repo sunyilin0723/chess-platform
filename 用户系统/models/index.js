@@ -72,6 +72,7 @@ const appealSchema = new mongoose.Schema({
   username: { type: String, required: true },
   reason: { type: String, default: '' },
   status: { type: String, default: 'pending' },
+  reviewedAt: { type: String, default: null },
   time: { type: String, default: () => new Date().toISOString() },
 }, { collection: 'appeals' });
 
@@ -136,4 +137,13 @@ const feedbackSchema = new mongoose.Schema({
 }, { collection: 'feedbacks' });
 const Feedback = mongoose.model('Feedback', feedbackSchema);
 
-module.exports = { User, Ban, Report, GameLog, Appeal, Token, Notification, ChatLog, DM, Feedback };
+// 管理员模型（原管理员系统/server.js 迁入）
+const adminSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  isMain: { type: Boolean, default: false },
+  createdAt: { type: String, default: () => new Date().toISOString() }
+}, { collection: 'admins' });
+const Admin = mongoose.model('Admin', adminSchema);
+
+module.exports = { User, Ban, Report, GameLog, Appeal, Token, Notification, ChatLog, DM, Feedback, Admin };

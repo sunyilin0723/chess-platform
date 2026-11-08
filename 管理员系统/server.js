@@ -1,161 +1,9 @@
 const path = require('path');
-const fs = require('fs');
-
-// 读取.env文件
-const envPath = path.join(__dirname, '..', '.env');
-if (fs.existsSync(envPath)) {
-  fs.readFileSync(envPath, 'utf-8').split('\n').forEach(line => {
-    const trimmed = line.trim();
-    if (trimmed && !trimmed.startsWith('#')) {
-      const [key, ...valueParts] = trimmed.split('=');
-      if (key && valueParts.length) process.env[key.trim()] = valueParts.join('=').trim();
-    }
-  });
-}
-
 const express = require('express');
 const crypto = require('crypto');
-const mongoose = require('mongoose');
 
-const app = express();
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json());
-
-const GAME_SERVER = 'http://localhost:' + (process.env.GAME_PORT || '3002');
-// 对外域名（可选）：localhost 与域名两条路都可用，任一可达即成功
-const SITE_URL = (process.env.SITE_URL || '').replace(/\/+$/, '');
-// 游戏服开了 HTTPS（Origin 证书）时，本地 http://localhost:端口 握不上手，需走回环或域名
-const SSL_ON = !!(process.env.SSL_CERT_PATH && process.env.SSL_KEY_PATH);
-// HTTPS 模式下游戏服另开仅监听 127.0.0.1 的 HTTP 回环，优先走它
-const LOCAL_HTTP = 'http://localhost:' + (process.env.LOCAL_HTTP_PORT || '3002');
-const gameBases = [...new Set((SSL_ON ? [LOCAL_HTTP, SITE_URL, GAME_SERVER] : [GAME_SERVER, SITE_URL]).filter(Boolean))];
-async function fetchGame(pathAndQuery, opts) {
-  const errors = [];
-  for (const base of gameBases) {
-    try {
-      const res = await fetch(base + pathAndQuery, opts);
-      if (!res.ok) { errors.push(base + ' -> HTTP ' + res.status); continue; }
-      return res;
-    } catch (e) { errors.push(base + ' -> ' + (e && e.message || e)); }
-  }
-  console.error('[fetchGame] 所有候选均失败 ' + pathAndQuery + ': ' + errors.join(' | '));
-  throw new Error('游戏服请求失败: ' + errors.join(' | '));
-}
-const ADMIN_KEY = process.env.ADMIN_KEY || 'no-key-configured';
-// 与游戏服共用敏感词过滤（返回过滤后的字符串）
-const { filterSensitive } = require(path.join(__dirname, '..', '用户系统', 'utils', 'sensitive'));
-
-// MongoDB 连接
-mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/gomoku')
-  .then(() => console.log('管理员系统 MongoDB 连接成功'))
-  .catch(err => { console.error('MongoDB 连接失败:', err.message); process.exit(1); });
-
-const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  wins: { type: Number, default: 0 },
-  losses: { type: Number, default: 0 },
-  games: { type: Number, default: 0 },
-  deletedAt: { type: String, default: null },
-  createdAt: { type: String, default: () => new Date().toISOString() }
-}, { collection: 'users' });
-
-const banSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  permanent: { type: Boolean, default: false },
-  until: { type: String, default: null },
-  reason: { type: String, default: '' },
-  offenses: { type: Number, default: 0 },
-  bannedAt: { type: String, default: () => new Date().toISOString() }
-}, { collection: 'banList' });
-
-const reportSchema = new mongoose.Schema({
-  id: { type: String, required: true, unique: true },
-  reporter: { type: String, required: true },
-  target: { type: String, required: true },
-  reason: { type: String, default: '' },
-  reasonType: { type: String, default: 'other' },
-  screenshot: { type: String, default: '' },
-  status: { type: String, default: 'pending' },
-  time: { type: String, default: () => new Date().toISOString() },
-  reviewedAt: { type: String, default: null },
-  adminMark: { type: Boolean, default: false }
-}, { collection: 'reports' });
-
-const gameLogSchema = new mongoose.Schema({
-  winner: { type: String, required: true },
-  loser: { type: String, required: true },
-  draw: { type: Boolean, default: false },
-  totalMoves: { type: Number, default: 0 },
-  gameType: { type: String, default: 'gomoku' },
-  moves: { type: [mongoose.Schema.Types.Mixed], default: [] },
-  time: { type: String, default: () => new Date().toISOString() }
-}, { collection: 'gameRecord' });
-
-const appealSchema = new mongoose.Schema({
-  id: { type: String, required: true, unique: true },
-  reportId: { type: String, default: '' },
-  username: { type: String, required: true },
-  reason: { type: String, default: '' },
-  status: { type: String, default: 'pending' },
-  time: { type: String, default: () => new Date().toISOString() },
-  reviewedAt: { type: String, default: null }
-}, { collection: 'appeals' });
-
-const notifSchema = new mongoose.Schema({
-  id: { type: String, required: true },
-  username: { type: String, required: true },
-  title: { type: String, default: '' },
-  content: { type: String, default: '' },
-  read: { type: Boolean, default: false },
-  time: { type: String, default: () => new Date().toISOString() }
-}, { collection: 'notifications' });
-
-const chatLogSchema = new mongoose.Schema({
-  id: { type: String, required: true, unique: true },
-  roomId: { type: String, required: true },
-  username: { type: String, default: '' },
-  color: { type: Number, required: true },
-  text: { type: String, required: true },
-  filtered: { type: Boolean, default: false },
-  alert: { type: Boolean, default: false },
-  time: { type: String, default: () => new Date().toISOString() },
-}, { collection: 'chatLogs' });
-
-const tokenSchema = new mongoose.Schema({
-  token: { type: String, required: true, unique: true },
-  username: { type: String, required: true }
-}, { collection: 'tokens' });
-
-const User = mongoose.model('User', userSchema);
-const Ban = mongoose.model('Ban', banSchema);
-const Report = mongoose.model('Report', reportSchema);
-const GameLog = mongoose.model('GameLog', gameLogSchema);
-const Appeal = mongoose.model('Appeal', appealSchema);
-const Token = mongoose.model('Token', tokenSchema);
-const Notification = mongoose.model('Notification', notifSchema);
-const ChatLog = mongoose.model('ChatLog', chatLogSchema);
-
-// 管理员模型
-const adminSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  isMain: { type: Boolean, default: false },
-  createdAt: { type: String, default: () => new Date().toISOString() }
-}, { collection: 'admins' });
-const Admin = mongoose.model('Admin', adminSchema);
-
-// 反馈模型
-const feedbackSchema = new mongoose.Schema({
-  id: { type: String, required: true, unique: true },
-  from: { type: String, required: true },
-  content: { type: String, required: true },
-  status: { type: String, default: 'pending' },
-  reply: { type: String, default: '' },
-  repliedAt: { type: String, default: null },
-  time: { type: String, default: () => new Date().toISOString() },
-}, { collection: 'feedbacks' });
-const Feedback = mongoose.model('Feedback', feedbackSchema);
+// 模型统一用游戏服的：两边 node_modules 各有一份 mongoose，本文件 require('mongoose') 会拿到未连接的第二实例
+const { User, Ban, Report, GameLog, Appeal, Token, Notification, ChatLog, Feedback, Admin } = require(path.join(__dirname, '..', '用户系统', 'models'));
 
 // 初始化主管理员
 async function initMainAdmin() {
@@ -178,10 +26,13 @@ async function initMainAdmin() {
     }
   } catch (e) { console.error('初始化主管理员失败:', e.message); }
 }
-initMainAdmin();
+// 由游戏服挂载：静态页挂 /admin，API 挂 /admin/api；deps = { listRooms, sendBroadcast }
+module.exports = function registerAdmin(app, deps) {
+  initMainAdmin();
+  app.use('/admin', express.static(path.join(__dirname, 'public')));
 
 // 管理员登录API
-app.post('/api/login', async (req, res) => {
+app.post('/admin/api/login', async (req, res) => {
   const { username, password } = req.body || {};
   console.log('登录请求:', username);
   if (!username || !password) return res.json({ error: '请输入用户名和密码' });
@@ -199,7 +50,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-app.post('/api/logout', async (req, res) => {
+app.post('/admin/api/logout', async (req, res) => {
   const h = req.headers.authorization || '';
   const token = h.replace('Bearer ', '');
   if (token) await Token.deleteOne({ token });
@@ -217,7 +68,7 @@ async function adminAuth(req, res, next) {
 }
 
 // 添加管理员（仅主管理员）
-app.post('/api/admins/add', adminAuth, async (req, res) => {
+app.post('/admin/api/admins/add', adminAuth, async (req, res) => {
   const admin = await Admin.findOne({ username: req.adminUsername });
   if (!admin || !admin.isMain) return res.status(403).json({ error: '只有主管理员可以添加管理员' });
   const { username } = req.body || {};
@@ -229,7 +80,7 @@ app.post('/api/admins/add', adminAuth, async (req, res) => {
 });
 
 // 删除管理员（仅主管理员）
-app.post('/api/admins/delete', adminAuth, async (req, res) => {
+app.post('/admin/api/admins/delete', adminAuth, async (req, res) => {
   const admin = await Admin.findOne({ username: req.adminUsername });
   if (!admin || !admin.isMain) return res.status(403).json({ error: '只有主管理员可以删除管理员' });
   const { username } = req.body || {};
@@ -242,7 +93,7 @@ app.post('/api/admins/delete', adminAuth, async (req, res) => {
 });
 
 // 获取管理员列表
-app.get('/api/admins', adminAuth, async (req, res) => {
+app.get('/admin/api/admins', adminAuth, async (req, res) => {
   const admins = await Admin.find({}, { password: 0 }).lean();
   res.json(admins);
 });
@@ -283,20 +134,19 @@ function checkAutoBan(target) {
   });
 }
 
-app.get('/api/rooms', adminAuth, async (req, res) => {
+app.get('/admin/api/rooms', adminAuth, async (req, res) => {
   try {
-    const rooms = await fetchGame('/api/admin/rooms', { headers: { 'Authorization': 'Bearer ' + ADMIN_KEY } });
-    const data = await rooms.json();
+    const data = deps.listRooms();
     res.json(Array.isArray(data) ? data.filter(r => !r.gameOver) : []);
   } catch { res.json([]); }
 });
 
-app.get('/api/reports', adminAuth, async (req, res) => {
+app.get('/admin/api/reports', adminAuth, async (req, res) => {
   const reports = await Report.find({ status: 'pending' }).lean();
   res.json(reports);
 });
 
-app.post('/api/report/approve', adminAuth, async (req, res) => {
+app.post('/admin/api/report/approve', adminAuth, async (req, res) => {
   const { reportId } = req.body || {};
   if (!reportId) return res.status(400).json({ error: '缺少举报ID' });
   const report = await Report.findOne({ id: reportId });
@@ -309,7 +159,7 @@ app.post('/api/report/approve', adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/report/reject', adminAuth, async (req, res) => {
+app.post('/admin/api/report/reject', adminAuth, async (req, res) => {
   const { reportId } = req.body || {};
   if (!reportId) return res.status(400).json({ error: '缺少举报ID' });
   const report = await Report.findOne({ id: reportId });
@@ -320,7 +170,7 @@ app.post('/api/report/reject', adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/mark', adminAuth, async (req, res) => {
+app.post('/admin/api/mark', adminAuth, async (req, res) => {
   const { username, reason } = req.body || {};
   if (!username || !reason) return res.status(400).json({ error: '参数不完整' });
   const user = await User.findOne({ username });
@@ -332,7 +182,7 @@ app.post('/api/mark', adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/user/:username', adminAuth, async (req, res) => {
+app.get('/admin/api/user/:username', adminAuth, async (req, res) => {
   const u = await User.findOne({ username: req.params.username }).lean();
   if (!u) return res.status(404).json({ error: '用户不存在' });
   const info = { ...u };
@@ -364,17 +214,17 @@ app.get('/api/user/:username', adminAuth, async (req, res) => {
   res.json(info);
 });
 
-app.get('/api/deleted-users', adminAuth, async (req, res) => {
+app.get('/admin/api/deleted-users', adminAuth, async (req, res) => {
   const users = await User.find({ deletedAt: { $ne: null } }).select('username wins losses games deletedAt createdAt').lean();
   res.json(users.map(u => ({ ...u, winRate: u.games > 0 ? Math.round(u.wins / u.games * 100) : 0 })));
 });
 
-app.get('/api/appeals', adminAuth, async (req, res) => {
+app.get('/admin/api/appeals', adminAuth, async (req, res) => {
   const appeals = await Appeal.find({ status: 'pending' }).lean();
   res.json(appeals);
 });
 
-app.post('/api/appeal/approve', adminAuth, async (req, res) => {
+app.post('/admin/api/appeal/approve', adminAuth, async (req, res) => {
   const { appealId } = req.body || {};
   if (!appealId) return res.status(400).json({ error: '缺少申诉ID' });
   const appeal = await Appeal.findOne({ id: appealId });
@@ -387,7 +237,7 @@ app.post('/api/appeal/approve', adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/appeal/reject', adminAuth, async (req, res) => {
+app.post('/admin/api/appeal/reject', adminAuth, async (req, res) => {
   const { appealId } = req.body || {};
   if (!appealId) return res.status(400).json({ error: '缺少申诉ID' });
   const appeal = await Appeal.findOne({ id: appealId });
@@ -406,14 +256,14 @@ async function checkMainAdmin(req, res) {
 }
 
 // 获取反馈列表
-app.get('/api/feedbacks', adminAuth, async (req, res) => {
+app.get('/admin/api/feedbacks', adminAuth, async (req, res) => {
   if (!(await checkMainAdmin(req, res))) return res.status(403).json({ error: '仅主管理员可查看反馈' });
   const list = await Feedback.find().sort({ time: -1 }).limit(50).lean();
   res.json(list);
 });
 
 // 回复反馈
-app.post('/api/feedback/reply', adminAuth, async (req, res) => {
+app.post('/admin/api/feedback/reply', adminAuth, async (req, res) => {
   if (!(await checkMainAdmin(req, res))) return res.status(403).json({ error: '仅主管理员可回复反馈' });
   const { feedbackId, reply } = req.body || {};
   if (!feedbackId || !reply || !reply.trim()) return res.status(400).json({ error: '请填写回复内容' });
@@ -430,7 +280,7 @@ app.post('/api/feedback/reply', adminAuth, async (req, res) => {
 
 // ==================== 广播通知（仅主管理员） ====================
 // 用户名包含匹配搜索（排除已软删除），供广播定向选人
-app.get('/api/search-users', adminAuth, async (req, res) => {
+app.get('/admin/api/search-users', adminAuth, async (req, res) => {
   const q = String(req.query.q || '').trim();
   if (!q) return res.json({ list: [] });
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -439,44 +289,20 @@ app.get('/api/search-users', adminAuth, async (req, res) => {
   res.json({ list: list.map(u => ({ username: u.username })) });
 });
 
-// 广播：优先回源游戏服（写库+WS实时推送），游戏服不可达时本地批量写库降级
-app.post('/api/broadcast', adminAuth, async (req, res) => {
+// 广播：进程内直调游戏服 sendBroadcast（写库+WS实时推送）
+app.post('/admin/api/broadcast', adminAuth, async (req, res) => {
   if (!(await checkMainAdmin(req, res))) return res.status(403).json({ error: '仅主管理员可发送广播' });
   const { content, username } = req.body || {};
   if (!content || !String(content).trim()) return res.status(400).json({ error: '请填写通知内容' });
   const trimmed = String(content).trim();
   if (trimmed.length > 200) return res.status(400).json({ error: '通知内容不能超过200字' });
-  const filtered = filterSensitive(trimmed);
   try {
-    const r = await fetchGame('/api/admin/notify', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + ADMIN_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: filtered, username: username || '' })
-    });
-    const data = await r.json();
-    return res.json({ ok: true, count: data.count || 0 });
-  } catch (e) { /* 游戏服不可达，降级本地写库 */ }
-  // 降级：分批写 Notification，无实时推送
-  try {
-    let count = 0;
-    if (username) {
-      const u = await User.findOne({ username, deletedAt: null });
-      if (!u) return res.status(400).json({ error: '用户不存在或已注销' });
-      await Notification.create({ id: crypto.randomBytes(8).toString('hex'), username, title: '管理员通知', content: filtered, read: false, time: new Date().toISOString() });
-      count = 1;
-    } else {
-      const users = await User.find({ deletedAt: null }).select('username').lean();
-      for (let i = 0; i < users.length; i += 50) {
-        const batch = users.slice(i, i + 50);
-        await Promise.all(batch.map(u => Notification.create({ id: crypto.randomBytes(8).toString('hex'), username: u.username, title: '管理员通知', content: filtered, read: false, time: new Date().toISOString() })));
-        count += batch.length;
-      }
-    }
-    res.json({ ok: true, count, offline: true });
-  } catch (e2) { res.status(500).json({ error: '广播发送失败: ' + (e2 && e2.message || e2) }); }
+    const r = await deps.sendBroadcast(trimmed, username || '');
+    res.json({ ok: true, count: r.count || 0 });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
-app.post('/api/force-delete', adminAuth, async (req, res) => {
+app.post('/admin/api/force-delete', adminAuth, async (req, res) => {
   // 只有主管理员可以注销用户
   const admin = await Admin.findOne({ username: req.adminUsername });
   if (!admin || !admin.isMain) {
@@ -494,9 +320,7 @@ app.post('/api/force-delete', adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-const PORT = process.env.ADMIN_PORT || 3003;
-
-app.get('/api/game-log', adminAuth, async (req, res) => {
+app.get('/admin/api/game-log', adminAuth, async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 7;
     const cutoff = new Date(Date.now() - days * 86400000).toISOString();
@@ -505,7 +329,7 @@ app.get('/api/game-log', adminAuth, async (req, res) => {
   } catch (e) { res.json({ total: 0, days: 7, games: [] }); }
 });
 
-app.get('/api/admin/chat-logs', adminAuth, async (req, res) => {
+app.get('/admin/api/admin/chat-logs', adminAuth, async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 7;
     const roomId = req.query.room || '';
@@ -519,4 +343,13 @@ app.get('/api/admin/chat-logs', adminAuth, async (req, res) => {
   } catch (e) { res.json({ total: 0, days: 7, logs: [] }); }
 });
 
-app.listen(PORT, '::', () => console.log(`管理员系统运行在 http://localhost:${PORT} (IPv6: http://[::1]:${PORT})`));
+// /admin SPA 回退：API 未匹配返回 404 JSON，其余返回管理端页面
+app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/admin/*', (req, res, next) => {
+  if (req.path.startsWith('/admin/api/')) return res.status(404).json({ error: '接口不存在' });
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+};
+
+// 直接运行本文件时给出提示（已合并，需由游戏服挂载）
+if (require.main === module) console.log('管理端已合并到用户系统：请运行 用户系统/启动.bat，浏览器访问 /admin 路径');

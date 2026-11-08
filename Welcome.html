@@ -165,16 +165,14 @@ npm install</pre>
 <section>
   <h2 class="sec-title"><span class="no">3</span>新建 .env</h2>
   <p class="sec-sub">仓库<b>不含</b> .env（已被 git 忽略）。请在项目根目录（用户版本/）<b>新建</b>一个名为 <code>.env</code> 的文件，把下面的模板整段复制进去，再按需修改</p>
-  <pre><span class="cm"># 游戏服务器端口</span>
+  <pre><span class="cm"># 游戏服务器端口（管理后台已合并进游戏服，走 /admin 路径，无需单独端口）</span>
 GAME_PORT=3002
-<span class="cm"># 管理后台端口</span>
-ADMIN_PORT=3003
 <span class="cm"># 数据库地址</span>
 MONGO_URI=mongodb://localhost:27017/chess-platform
-<span class="cm"># 主管理员账号（首次启动管理后台时创建）</span>
+<span class="cm"># 主管理员账号（首次启动时创建）</span>
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=改成你的密码
-<span class="cm"># 两个服务器共用的通信密钥（两边必须完全一致）</span>
+<span class="cm"># 管理接口密钥（游戏服 /api/admin/* 接口鉴权用）</span>
 ADMIN_KEY=改成一串随机字符
 <span class="cm"># 人机验证（留空 = 跳过验证，本地开发建议留空）</span>
 TURNSTILE_SITE_KEY=
@@ -189,11 +187,10 @@ SSL_KEY_PATH=</pre>
   <table>
     <tr><th>变量</th><th>必填</th><th>说明</th></tr>
     <tr><td><code>GAME_PORT</code></td><td>建议</td><td>游戏服务器端口，默认 <code>3002</code></td></tr>
-    <tr><td><code>ADMIN_PORT</code></td><td>建议</td><td>管理后台端口，默认 <code>3003</code></td></tr>
     <tr><td><code>MONGO_URI</code></td><td><span class="req">必填</span></td><td>数据库地址，如 <code>mongodb://localhost:27017/chess-platform</code></td></tr>
-    <tr><td><code>ADMIN_USERNAME</code></td><td><span class="req">必填</span></td><td>主管理员用户名（首次启动管理后台时自动创建）</td></tr>
+    <tr><td><code>ADMIN_USERNAME</code></td><td><span class="req">必填</span></td><td>主管理员用户名（首次启动时自动创建）</td></tr>
     <tr><td><code>ADMIN_PASSWORD</code></td><td><span class="req">必填</span></td><td>主管理员密码</td></tr>
-    <tr><td><code>ADMIN_KEY</code></td><td><span class="req">必填</span></td><td>两个服务器共用的通信密钥，<b>必须一致</b>，否则管理后台看不到实时对局</td></tr>
+    <tr><td><code>ADMIN_KEY</code></td><td>可选</td><td>游戏服 <code>/api/admin/*</code> 接口的鉴权密钥；管理后台已进程内直调，不再依赖它</td></tr>
     <tr><td><code>TURNSTILE_SITE_KEY</code></td><td>可选</td><td>人机验证 siteKey；<b>留空 = 跳过验证</b>（本地开发建议留空）</td></tr>
     <tr><td><code>TURNSTILE_SECRET_KEY</code></td><td>可选</td><td>人机验证 secretKey，与上面成对配置</td></tr>
     <tr><td><code>SITE_URL</code></td><td>可选</td><td>对外域名，<b>不带端口</b>（如 <code>https://chess.example.com</code>），部署到公网时填</td></tr>
@@ -206,21 +203,17 @@ SSL_KEY_PATH=</pre>
 <!-- 第四步 -->
 <section>
   <h2 class="sec-title"><span class="no">4</span>启动服务</h2>
-  <p class="sec-sub">先确认 MongoDB 正在运行，然后开两个终端分别启动</p>
-  <pre><span class="cm"># 终端 1 —— 游戏服务器</span>
+  <p class="sec-sub">先确认 MongoDB 正在运行，然后开一个终端启动（管理后台已合并进游戏服）</p>
+  <pre><span class="cm"># 启动游戏服务器（含管理后台）</span>
 cd 用户系统
-node server.js
-
-<span class="cm"># 终端 2 —— 管理后台</span>
-cd 管理员系统
 node server.js</pre>
   <table>
     <tr><th>地址</th><th>用途</th></tr>
     <tr><td><code>http://localhost:3002</code></td><td>欢迎页 / 用户端（游戏入口）</td></tr>
     <tr><td><code>http://localhost:3002/home</code></td><td>大厅（需先登录）</td></tr>
-    <tr><td><code>http://localhost:3003</code></td><td>管理后台（用 ADMIN_USERNAME/PASSWORD 登录）</td></tr>
+    <tr><td><code>http://localhost:3002/admin</code></td><td>管理后台（用 ADMIN_USERNAME/PASSWORD 登录）</td></tr>
   </table>
-  <div class="tip">🌐 <b>用域名访问时不用带端口</b>：配好 Cloudflare Origin 证书（见常见问题）或反向代理后，直接打开 <code>http://你的域名</code> / <code>https://你的域名</code> 即可，浏览器地址里<b>不需要</b>写 <code>:3002</code>；下面的 <code>localhost:3002</code> 只是本地开发用的地址。</div>
+  <div class="tip">🌐 <b>用域名访问时不用带端口</b>：配好 Cloudflare Origin 证书（见常见问题）或反向代理后，直接打开 <code>http://你的域名</code> / <code>https://你的域名</code> 即可，管理后台在 <code>https://你的域名/admin</code>；下面的 <code>localhost:3002</code> 只是本地开发用的地址。</div>
 </section>
 
 <!-- 首次使用 -->
@@ -231,7 +224,7 @@ node server.js</pre>
     <h4>1. 注册一个普通账号</h4>
     <p>打开 <code>http://localhost:3002</code> → 立即开始 → 注册（新用户自动获得 1200 天梯初始分）</p>
     <h4>2. 登录管理后台</h4>
-    <p>打开 <code>http://localhost:3003</code>，用 <code>.env</code> 里的 ADMIN_USERNAME / ADMIN_PASSWORD 登录；可在"管理员"页添加子管理员</p>
+    <p>打开 <code>http://localhost:3002/admin</code>（域名部署则为 <code>https://你的域名/admin</code>），用 <code>.env</code> 里的 ADMIN_USERNAME / ADMIN_PASSWORD 登录；可在"管理员"页添加子管理员</p>
     <h4>3. 开一局试试</h4>
     <p>大厅选择棋类 → 人机对战（三档难度）或输入房间号人人对战</p>
   </div>
@@ -243,14 +236,14 @@ node server.js</pre>
   <div class="faq">
     <h4>启动报 MongoDB 连接失败？</h4>
     <p>先确认 MongoDB 服务在运行：Windows 在 <code>services.msc</code> 里找 <code>MongoDB</code>，macOS 执行 <code>brew services list</code>，Linux 执行 <code>systemctl status mongod</code>；服务没起就先启动它（见第 1 步的命令）。服务正常则检查 <code>MONGO_URI</code> 是否写对。</p>
-    <h4>管理后台看不到实时对局？</h4>
-    <p>两端 <code>ADMIN_KEY</code> 必须完全一致，改完需<b>重启两个服务</b>。</p>
+    <h4>管理后台打不开/实时对局为空？</h4>
+    <p>管理后台随游戏服一起启动，确认访问的是 <code>/admin</code> 路径；实时对局由游戏服进程内直给，重启游戏服后刷新即可。</p>
     <h4>改了前端代码没生效？</h4>
     <p>浏览器强制刷新 <code>Ctrl+F5</code>（HTML 用 <code>?v=N</code> 版本号控缓存，改动大时版本号会递增）。</p>
     <h4>注册/举报提示"人机验证失败"？</h4>
     <p>本地开发建议把 <code>TURNSTILE_SITE_KEY</code> / <code>TURNSTILE_SECRET_KEY</code> <b>留空</b>（跳过验证）；正式使用需到 Cloudflare 控制台创建 Turnstile 站点，且 hostname 包含你访问用的域名或 localhost。</p>
     <h4>端口被占用？</h4>
-    <p>修改 <code>.env</code> 中的 <code>GAME_PORT</code> / <code>ADMIN_PORT</code> 后重启。</p>
+    <p>修改 <code>.env</code> 中的 <code>GAME_PORT</code> 后重启。</p>
     <h4>想用域名直接开 HTTPS（访问不带端口）？</h4>
     <p>用 <b>Cloudflare Origin Certificate</b> 让 Node 自己在 443 上说 HTTPS：</p>
     <p>① Cloudflare 控制台 → <b>SSL/TLS → Origin Server → Create Certificate</b>（域名填你的站点）→ 把 <b>Origin Certificate</b> 全文存成 <code>certs/origin.pem</code>、<b>Private Key</b> 全文存成 <code>certs/origin.key</code>（放在项目根目录，即 <code>.env</code> 同级）；<br>
@@ -264,7 +257,7 @@ node server.js</pre>
 
 <div class="cta">
   <h2>配置完成了？</h2>
-  <p>进入站点开始对局，或前往管理后台管理用户</p>
+  <p>进入站点开始对局，或访问 <code>/admin</code> 进入管理后台管理用户</p>
   <button class="btn-main" onclick="location.href='http://localhost:3002/login'">进入站点 →</button>
 </div>
 
