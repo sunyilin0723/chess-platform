@@ -331,6 +331,47 @@ function intlStalemate(board, color, lastMove) {
   return !intlHasLegalMoves(board, color, lastMove);
 }
 
+// 局面指纹（三次重复判定：棋盘 + 行棋方 + 易位权 + 吃过路兵目标格）
+function intlPositionKey(board, turn, lastMove) {
+  let s = '';
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) s += board[r][c] || '.';
+  const rr = (lastMove && lastMove.castlingRights) || { wk: true, wq: true, bk: true, bq: true };
+  s += `|${turn}|${rr.wk ? 1 : 0}${rr.wq ? 1 : 0}${rr.bk ? 1 : 0}${rr.bq ? 1 : 0}`;
+  s += (lastMove && lastMove.type === 'pawn_double') ? `|ep${(lastMove.fr + lastMove.tr) / 2},${lastMove.tc}` : '|-';
+  return s;
+}
+
+// 子力不足判和（死局）：单王 / 王+单象 / 王+单马 / 双方各一象且同色格
+function intlInsufficientMaterial(board) {
+  const mats = { 1: [], 2: [] };
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+    const p = board[r][c];
+    if (p && p.toUpperCase() !== 'K') mats[intlPieceColor(p)].push({ t: p.toUpperCase(), r, c });
+  }
+  const lone = arr => arr.length === 0 || (arr.length === 1 && (arr[0].t === 'B' || arr[0].t === 'N'));
+  if (!lone(mats[1]) || !lone(mats[2])) return false;
+  const all = [...mats[1], ...mats[2]];
+  if (all.length <= 1) return true;
+  if (all.every(x => x.t === 'B')) return all.every(x => (x.r + x.c) % 2 === (all[0].r + all[0].c) % 2);
+  return false; // 马+马、马+象等仍可能凑成杀局
+}
+
+// 走后更新和棋状态：半回合计数（兵步/吃子清零）+ 局面出现次数计数
+// 返回 { halfBefore, posKey, drawReason }，drawReason 为 null 表示未触发和棋
+function intlUpdateDrawState(room, moverPiece, captured, special) {
+  const halfBefore = room.intlHalfmove || 0;
+  room.intlHalfmove = ((moverPiece && moverPiece.toUpperCase() === 'P') || captured || special === 'en_passant')
+    ? 0 : halfBefore + 1;
+  const posKey = intlPositionKey(room.board, room.turn, room.intlLastMove);
+  const n = (room.intlPositions.get(posKey) || 0) + 1;
+  room.intlPositions.set(posKey, n);
+  let drawReason = null;
+  if (n >= 3) drawReason = '三次重复局面（平局）';
+  else if (room.intlHalfmove >= 100) drawReason = '五十回合规则（平局）';
+  else if (intlInsufficientMaterial(room.board)) drawReason = '子力不足（平局）';
+  return { halfBefore, posKey, drawReason };
+}
+
 // ==================== 国际象棋AI ====================
 const INTL_PIECE_VALUE = { K: 10000, Q: 900, R: 500, B: 330, N: 320, P: 100 };
 
@@ -417,7 +458,8 @@ function intlSortMoves(board, moves) {
     const captured = board[tr][tc];
     if (captured) score += INTL_PIECE_VALUE[captured.toUpperCase()] || 0;
     if (special === 'castle_short' || special === 'castle_long') score += 60;
-    if (special && typeof special === 'string' && ['q','r','b','n'].includes(special)) score += 800;
+    // 升变 special 白方为大写、黑方为小写，须大小写兼容
+    if (special && typeof special === 'string' && ['q', 'r', 'b', 'n'].includes(special.toLowerCase())) score += 800;
     return { fr, fc, tr, tc, special, score };
   }).sort((a, b) => b.score - a.score);
 }
@@ -508,4 +550,4 @@ function intlMinimaxForColor(board, depth, alpha, beta, toMove, aiColor, lastMov
   }
 }
 
-module.exports = { createIntlChessBoard, intlPieceColor, getIntlChessMoves, getIntlChessLegalMoves, intlHasLegalMoves, makeIntlMove, intlCheck, intlCheckmate, intlStalemate, intlGetAIMove };
+module.exports = { createIntlChessBoard, intlPieceColor, getIntlChessMoves, getIntlChessLegalMoves, intlHasLegalMoves, makeIntlMove, intlCheck, intlCheckmate, intlStalemate, intlPositionKey, intlInsufficientMaterial, intlUpdateDrawState, intlGetAIMove };
