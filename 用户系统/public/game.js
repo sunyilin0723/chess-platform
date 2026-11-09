@@ -7,6 +7,9 @@ let board=[],lastMove=null,playerNames={};
 let timerSeconds=0,timeLeft=[0,0],moveCount=0;
 let reportScreenshot='';
 let isAI=false,aiColor=0,forbiddenRule=false;
+// 免注册（游客）模式：仅人机、每次主动进房需人机验证、数据不保存
+let guestMode=false,pendingGuestTurnstile='';
+const GUEST_NICK_RE=/^[一-龥A-Za-z0-9_]{1,12}$/;
 
 // HTML安全转义
 function escapeHtml(str){
@@ -115,6 +118,7 @@ function updateReturnGameNav(){
 }
 
 function showView(name){
+  if(guestMode&&name==='profile')name='lobby'; // 游客无个人主页
   // 关闭移动端菜单
   const navLinks=document.getElementById('nav-links');
   const hamburgerBtn=document.querySelector('.hamburger-btn');
@@ -131,7 +135,7 @@ function showView(name){
       const el=document.getElementById(id);
       if(el) el.classList.remove('show');
     });
-    ['join-choice-dialog','feedback-dialog','welcome-dialog'].forEach(id=>{
+    ['join-choice-dialog','feedback-dialog','welcome-dialog','guest-nick-dialog','join-verify-dialog'].forEach(id=>{
       const el=document.getElementById(id);
       if(el) el.style.display='none';
     });
@@ -184,6 +188,7 @@ async function doLogin(){
   try{const d=await apiFetch('/api/login',{method:'POST',body:JSON.stringify({username,password})});
   if(d.error)return authError(d.error);
   token=d.token;currentUser=d.username;localStorage.setItem('gomoku_token',token);localStorage.setItem('gomoku_user',currentUser);
+  sessionStorage.removeItem('guest_session');guestMode=false;setGuestUI(false);
   document.getElementById('lobby-greeting').textContent='欢迎，'+currentUser;loadNotifs();showView('lobby');
   }catch(e){authError(e.message)}
 }
@@ -198,12 +203,14 @@ async function doRegister(){
   try{const d=await apiFetch('/api/register',{method:'POST',body:JSON.stringify({username,password,turnstileToken})});
   if(d.error){resetTurnstile('register');return authError(d.error);}
   token=d.token;currentUser=d.username;localStorage.setItem('gomoku_token',token);localStorage.setItem('gomoku_user',currentUser);
+  sessionStorage.removeItem('guest_session');guestMode=false;setGuestUI(false);
   document.getElementById('lobby-greeting').textContent='欢迎，'+currentUser;showView('lobby');
   document.getElementById('welcome-dialog').style.display='flex';
   }catch(e){resetTurnstile('register');authError(e.message)}
 }
 function closeWelcomeDialog(){document.getElementById('welcome-dialog').style.display='none'}
 async function logout(){
+  if(guestMode){guestLogout();return;} // 游客「退出试玩」不调 /api/logout
   // 停止重连，防止用空 token 重连
   backToLobbyCalled=true;
   if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
@@ -229,6 +236,19 @@ async function logout(){
   showView('auth')
 }
 async function checkLogin(){
+  // 游客会话优先（sessionStorage，关标签即失效）
+  try{
+    const gs=sessionStorage.getItem('guest_session');
+    if(gs){const o=JSON.parse(gs);if(o&&o.name&&GUEST_NICK_RE.test(o.name)){guestMode=true;currentUser=o.name;token='';}}
+  }catch{}
+  if(guestMode){
+    setGuestUI(true);
+    document.getElementById('lobby-greeting').textContent='试玩中，'+currentUser+'（免注册，数据不保存）';
+    let target=viewForPath(location.pathname);
+    if(target==='auth'||target==='profile')target='lobby';
+    showView(target);
+    return;
+  }
   if(!token){showView('auth');return}
   try{
     const d=await apiFetch('/api/me');
@@ -243,6 +263,66 @@ async function checkLogin(){
   }catch{showView('auth')}
 }
 function selectTimer(secs,btn){selectedTimer=secs;document.querySelectorAll('.timer-select button').forEach(b=>b.classList.remove('sel'));btn.classList.add('sel')}
+
+// ==================== 游客（免注册）模式 ====================
+function setGuestUI(on){
+  ['nav-profile','nav-notif','nav-dm','nav-feedback'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display=on?'none':''});
+  const lo=document.getElementById('nav-logout');if(lo)lo.textContent=on?'退出试玩':'退出';
+  const pvp=document.getElementById('btn-pvp-mode');if(pvp)pvp.style.display=on?'none':'';
+  const pve=document.getElementById('btn-pve-mode');
+  const chatRow=document.getElementById('chat-row');if(chatRow)chatRow.style.display=on?'none':'';
+  if(on){
+    // 强制人机对战、回退动态难度档
+    if(pve)selectMode('pve',pve);
+    if(selectedDifficulty==='dynamic'){const eb=document.querySelector('#ai-difficulty button');if(eb)selectDifficulty('easy',eb);}
+  }
+}
+function startGuestMode(){
+  const ni=document.getElementById('guest-nick');
+  document.getElementById('guest-nick-error').textContent='';
+  if(ni)ni.value='';
+  document.getElementById('guest-nick-dialog').style.display='flex';
+  if(ni)ni.focus();
+}
+function confirmGuestNick(){
+  const ni=document.getElementById('guest-nick');
+  const err=document.getElementById('guest-nick-error');
+  const n=(ni?ni.value:'').trim().normalize('NFC');
+  if(!GUEST_NICK_RE.test(n)){err.textContent='昵称需为1-12位中英文/数字/下划线';return;}
+  sessionStorage.setItem('guest_session',JSON.stringify({name:n}));
+  guestMode=true;currentUser=n;token='';
+  document.getElementById('guest-nick-dialog').style.display='none';
+  setGuestUI(true);
+  document.getElementById('lobby-greeting').textContent='试玩中，'+currentUser+'（免注册，数据不保存）';
+  showView('lobby');
+}
+function guestLogout(){
+  backToLobbyCalled=true;
+  if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
+  reconnectAttempts=0;
+  if(ws){ws.onclose=null;ws.close();ws=null;}
+  sessionStorage.removeItem('guest_session');
+  guestMode=false;currentUser='';pendingGuestTurnstile='';
+  setGuestUI(false);
+  showView('auth');
+}
+// 游客每次主动进房：弹人机验证 → 通过后连接
+function guestVerifyJoin(){
+  const t=getTurnstileToken('join');
+  if(window.turnstile&&_turnstileWidgets['join']!==undefined&&!t){
+    document.getElementById('join-verify-error').textContent='请先完成人机验证';return;
+  }
+  pendingGuestTurnstile=t;
+  resetTurnstile('join');
+  document.getElementById('join-verify-dialog').style.display='none';
+  connect('gpve_'+currentUser,'pve',selectedDifficulty);
+}
+function openJoinVerify(){
+  document.getElementById('join-verify-error').textContent='';
+  document.getElementById('join-verify-dialog').style.display='flex';
+  ensureTurnstile('join','join-turnstile');
+}
+
 function selectMode(mode,btn){
   selectedMode=mode;
   document.querySelectorAll('.mode-select button').forEach(b=>b.classList.remove('selected'));
@@ -274,11 +354,11 @@ function selectGame(type,btn){
     if(type==='gomoku')forbidden.classList.remove('hidden');
     else forbidden.classList.add('hidden');
   }
-  // 动态难度仅国际象棋提供；切走时若正选中动态则回退到简单
+  // 动态难度仅国际象棋提供（游客不支持动态档）；切走时若正选中动态则回退到简单
   const dyn=document.getElementById('dynamic-diff-btn');
   if(dyn){
-    dyn.style.display=type==='intl_chess'?'':'none';
-    if(type!=='intl_chess'&&selectedDifficulty==='dynamic'){
+    dyn.style.display=(type==='intl_chess'&&!guestMode)?'':'none';
+    if((type!=='intl_chess'||guestMode)&&selectedDifficulty==='dynamic'){
       const easyBtn=document.querySelector('#ai-difficulty button');
       if(easyBtn)selectDifficulty('easy',easyBtn);
     }
@@ -356,6 +436,7 @@ function initGameSlider(){
   });
 }
 function joinRoom(){
+  if(guestMode){openJoinVerify();return;} // 游客每次主动进房先过人机验证
   let roomId=document.getElementById('room-input').value.trim()||'default';
   if(selectedMode==='pve') roomId='pve_'+currentUser;
   connect(roomId,selectedMode,selectedDifficulty);

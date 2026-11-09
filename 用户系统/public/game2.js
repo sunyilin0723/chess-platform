@@ -40,7 +40,14 @@ function doConnect(roomId, mode, difficulty, forbidden){
   ws.onopen=()=>{
     reconnectAttempts = 0;
     const autoMode=connectOptions.spectator?'spectate':(connectOptions.reconnectWasPlayer?'play':null);
-    ws.send(JSON.stringify({type:'join',room:selectedGame+'_'+roomId,name:currentUser,token,gameType:selectedGame,timerSeconds:selectedTimer,mode:mode||'pvp',difficulty:difficulty||'easy',forbidden:forbidden||false,autoMode}));
+    const joinMsg={type:'join',room:selectedGame+'_'+roomId,name:currentUser,token,gameType:selectedGame,timerSeconds:selectedTimer,mode:mode||'pvp',difficulty:difficulty||'easy',forbidden:forbidden||false,autoMode};
+    if(typeof guestMode!=='undefined'&&guestMode){
+      joinMsg.guest=true;
+      // 主动进房带刚验证的 turnstile token（用后即清）；自动重连带内存票据
+      if(pendingGuestTurnstile){joinMsg.turnstileToken=pendingGuestTurnstile;pendingGuestTurnstile='';}
+      else if(connectOptions.guestTicket){joinMsg.guestTicket=connectOptions.guestTicket;}
+    }
+    ws.send(JSON.stringify(joinMsg));
   };
   ws.onmessage=(e)=>{
     const msg=JSON.parse(e.data);
@@ -90,7 +97,7 @@ function doConnect(roomId, mode, difficulty, forbidden){
         gameOver=msg.gameOver||false;
         lastMove=null;
         showView('game');
-        const displayRoom=msg.room.replace(/^[a-z]+_/,'');
+        const displayRoom=msg.room.replace(/^[a-z]+_/,'').replace(/^gpve_/,'');
         document.getElementById('room-id').textContent='房间: '+displayRoom+' (观战中)';
         document.getElementById('chat-msgs').innerHTML='';
         // 隐藏对局按钮
@@ -119,12 +126,13 @@ function doConnect(roomId, mode, difficulty, forbidden){
       isSpectator=false;
       connectOptions.spectator=false;
       connectOptions.reconnectWasPlayer=true;
+      if(msg.guestTicket)connectOptions.guestTicket=msg.guestTicket; // 游客票据：断线重连免验
       myColor=msg.color;playerNames=msg.names||{};gameType=msg.gameType;boardSize=msg.size||15;timerSeconds=msg.timerSeconds||0;
       isAI=msg.mode==='pve';aiColor=isAI?(myColor===1?2:1):0;
       timeLeft=[timerSeconds,timerSeconds];
       board=msg.board||[];
       showView('game');
-      const displayRoom=msg.room.replace(/^[a-z]+_/,'');
+      const displayRoom=msg.room.replace(/^[a-z]+_/,'').replace(/^gpve_/,'');
       document.getElementById('room-id').textContent='房间: '+displayRoom+(isAI?' (人机对战)':'');
       gameOver=false;turn=0;lastMove=null;
       document.getElementById('chat-msgs').innerHTML='';
@@ -146,7 +154,7 @@ function doConnect(roomId, mode, difficulty, forbidden){
     if(msg.type==='error'){
       addChat('⚠ '+msg.msg,'msg-alert');setStatus('⚠ '+msg.msg);
       // 大厅视图下聊天框/状态栏不可见，弹窗提示
-      if(!document.getElementById('game-view').classList.contains('active'))alert('⚠ '+msg.msg);
+      if(!document.getElementById('game-view').classList.contains('active')){alert('⚠ '+msg.msg);backToLobbyCalled=true;} // 进房被拒：停止自动重连
     }
     if(msg.type==='names'){playerNames=msg.names;updatePlayersInfo()}
     if(msg.type==='start'){
@@ -392,7 +400,7 @@ function sendUndo(){if(isSpectator||gameOver)return;if(ws&&ws.readyState===1)ws.
 function sendDraw(){if(isSpectator||gameOver)return;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'draw_request'}))}
 function respondUndo(ok){document.getElementById('undo-dialog').classList.remove('show');if(isSpectator)return;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'undo_response',approve:ok}))}
 function respondDraw(ok){document.getElementById('draw-dialog').classList.remove('show');if(isSpectator)return;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'draw_response',approve:ok}))}
-function sendChatMsg(){const t=document.getElementById('chat-input').value.trim();if(!t||!ws||ws.readyState!==1)return;ws.send(JSON.stringify({type:'chat',text:t}));document.getElementById('chat-input').value=''}
+function sendChatMsg(){if(typeof guestMode!=='undefined'&&guestMode)return;const t=document.getElementById('chat-input').value.trim();if(!t||!ws||ws.readyState!==1)return;ws.send(JSON.stringify({type:'chat',text:t}));document.getElementById('chat-input').value=''}
 document.getElementById('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter')sendChatMsg()});
 document.getElementById('room-input').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom()});
 document.getElementById('room-id').onclick=()=>{const t=document.getElementById('room-id').textContent.replace('房间: ','');navigator.clipboard.writeText(t).then(()=>{document.getElementById('room-id').textContent='已复制!';setTimeout(()=>document.getElementById('room-id').textContent='房间: '+t,1000)})};

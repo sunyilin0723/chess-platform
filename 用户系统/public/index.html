@@ -14,17 +14,17 @@
 <div id="navbar">
   <div style="display:flex;align-items:center;gap:16px;">
     <span class="logo">棋类对战</span>
-    <span onclick="openFeedbackDialog()" style="cursor:pointer;font-size:13px;color:var(--accent-yellow);border:1px solid var(--accent-yellow);border-radius:6px;padding:4px 12px;transition:all 0.2s;">💬 反馈</span>
+    <span onclick="openFeedbackDialog()" id="nav-feedback" style="cursor:pointer;font-size:13px;color:var(--accent-yellow);border:1px solid var(--accent-yellow);border-radius:6px;padding:4px 12px;transition:all 0.2s;">💬 反馈</span>
   </div>
   <div class="nav-links" id="nav-links">
     <span onclick="showView('lobby')">大厅</span>
     <span onclick="showView('leaderboard')">排行榜</span>
-    <span onclick="showView('profile')">个人主页</span>
+    <span onclick="showView('profile')" id="nav-profile">个人主页</span>
     <span id="nav-notif" onclick="toggleNotifPanel()" style="position:relative">🔔<span id="notif-badge" style="display:none;position:absolute;top:-6px;right:-8px;background:#e74c3c;color:#fff;font-size:10px;padding:1px 4px;border-radius:8px">0</span></span>
     <span id="nav-dm" onclick="toggleDmPanel()" style="position:relative;cursor:pointer">📩<span id="dm-badge" style="display:none;position:absolute;top:-6px;right:-8px;background:#e74c3c;color:#fff;font-size:10px;padding:1px 4px;border-radius:8px">0</span></span>
     <span class="user-badge" id="nav-username"></span>
     <button id="theme-toggle" onclick="toggleTheme()"><span class="icon-sun">☀️</span><span class="icon-moon">🌙</span></button>
-    <span onclick="logout()">退出</span>
+    <span onclick="logout()" id="nav-logout">退出</span>
   </div>
   <button class="hamburger-btn" onclick="toggleMobileMenu()">
     <span></span>
@@ -67,6 +67,37 @@
         <button onclick="doRegister()">注册</button>
       </div>
       <div class="error" id="auth-error"></div>
+      <div style="margin-top:14px;border-top:1px solid var(--border-color);padding-top:14px">
+        <button onclick="startGuestMode()" style="width:100%;padding:10px;font-size:14px;border:1px dashed var(--border-color);border-radius:8px;background:transparent;color:var(--text-secondary);cursor:pointer;">🎮 游客试玩（免注册，仅人机对战）</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 游客昵称弹窗 -->
+<div id="guest-nick-dialog" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:270;justify-content:center;align-items:center">
+  <div style="background:var(--bg-card);border-radius:12px;padding:28px 32px;width:360px;max-width:92vw;text-align:center">
+    <h3 style="font-size:18px;margin-bottom:8px;">游客试玩</h3>
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">输入昵称开始（1-12位中英文/数字/下划线，数据不保存）</p>
+    <input id="guest-nick" type="text" maxlength="12" placeholder="你的昵称" style="width:100%;padding:10px 12px;font-size:14px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-input);color:var(--text-primary);outline:none;margin-bottom:10px" onkeydown="if(event.key==='Enter')confirmGuestNick()">
+    <div id="guest-nick-error" style="font-size:12px;min-height:16px;color:var(--accent-red);margin-bottom:8px"></div>
+    <div style="display:flex;gap:10px">
+      <button onclick="document.getElementById('guest-nick-dialog').style.display='none'" style="flex:1;padding:10px;border:none;border-radius:8px;background:var(--bg-input);color:var(--text-secondary);cursor:pointer;font-size:14px">取消</button>
+      <button onclick="confirmGuestNick()" style="flex:1;padding:10px;border:none;border-radius:8px;background:var(--accent-blue);color:#fff;cursor:pointer;font-size:14px">开始试玩</button>
+    </div>
+  </div>
+</div>
+
+<!-- 游客进房人机验证弹窗（每次主动进房） -->
+<div id="join-verify-dialog" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:270;justify-content:center;align-items:center">
+  <div style="background:var(--bg-card);border-radius:12px;padding:28px 32px;width:380px;max-width:92vw;text-align:center">
+    <h3 style="font-size:18px;margin-bottom:8px;">🛡 进入房间前的人机验证</h3>
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">完成验证后开始人机对战</p>
+    <div id="join-turnstile" style="margin-bottom:10px;display:flex;justify-content:center"></div>
+    <div id="join-verify-error" style="font-size:12px;min-height:16px;color:var(--accent-red);margin-bottom:8px"></div>
+    <div style="display:flex;gap:10px">
+      <button onclick="document.getElementById('join-verify-dialog').style.display='none'" style="flex:1;padding:10px;border:none;border-radius:8px;background:var(--bg-input);color:var(--text-secondary);cursor:pointer;font-size:14px">取消</button>
+      <button onclick="guestVerifyJoin()" style="flex:1;padding:10px;border:none;border-radius:8px;background:var(--accent-blue);color:#fff;cursor:pointer;font-size:14px">验证并进入</button>
     </div>
   </div>
 </div>
@@ -90,8 +121,8 @@
         <button onclick="selectTimer(1800,this)">30分钟</button>
       </div>
       <div class="mode-select">
-        <button class="selected" onclick="selectMode('pvp',this)">人人对战</button>
-        <button onclick="selectMode('pve',this)">人机对战</button>
+        <button class="selected" id="btn-pvp-mode" onclick="selectMode('pvp',this)">人人对战</button>
+        <button id="btn-pve-mode" onclick="selectMode('pve',this)">人机对战</button>
       </div>
       <div id="ai-difficulty" style="display:none">
         <span>AI难度：</span>
@@ -299,8 +330,8 @@
   </div>
 </div>
 
-<script src="game.js?v=15"></script>
-<script src="game2.js?v=16"></script>
+<script src="game.js?v=16"></script>
+<script src="game2.js?v=17"></script>
 <script src="game3.js?v=16"></script>
 </body>
 </html>

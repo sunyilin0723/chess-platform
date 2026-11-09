@@ -150,7 +150,7 @@ function startTimer(room) {
       const winner = idx === 0 ? 2 : 1;
       const wName = room.names[winner], lName = room.names[idx + 1];
       broadcast(room, { type: 'game_over', winner, reason: '超时', winnerName: wName, loserName: lName });
-      if (wName && lName && wName !== lName) recordGame(wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), room.gameType);
+      if (wName && lName && wName !== lName) persistGame(room, wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), room.gameType);
       cleanupRoom(room);
     }
   }, 1000);
@@ -180,11 +180,11 @@ function finishLeave(room) {
       const winner = g.color === 1 ? 2 : 1;
       const wName = room.names[winner];
       broadcast(room, { type: 'game_over', winner, reason: '对手离开', winnerName: wName, loserName: lName || '对手' });
-      if (wName && lName && wName !== lName) recordGame(wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), room.gameType);
+      if (wName && lName && wName !== lName) persistGame(room, wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), room.gameType);
     }
     broadcast(room, { type: 'player_left', color: g.color });
   }
-  if (room.players.length === 0) { cleanupRoom(room); rooms.delete(room.id); }
+  if (!room.players.some(p => !p.isAI)) { cleanupRoom(room); rooms.delete(room.id); } // 无人类玩家（含仅剩AI）即删房
   else if (room.gameOver) resetForNewGame(room);
 }
 
@@ -281,7 +281,7 @@ async function joinAsPlayer(ws, room, name, token) {
   room.names[color] = name;
   room.tokens[color] = token || '';
 
-  ws.send(JSON.stringify({ type: 'joined', color, room: room.id, names: room.names, gameType: room.gameType, size: room.size, timerSeconds: room.timerSeconds, board: room.board, mode: room.mode, difficulty: room.difficulty }));
+  ws.send(JSON.stringify({ type: 'joined', color, room: room.id, names: room.names, gameType: room.gameType, size: room.size, timerSeconds: room.timerSeconds, board: room.board, mode: room.mode, difficulty: room.difficulty, ...guestTicketPayload(ws, name) }));
 
   // 开局设置只在对局未开始时执行（防止中途重连重复 push AI / 重发 choose_first）
   const humanCount = room.players.filter(p => !p.isAI).length;
@@ -384,6 +384,10 @@ async function recordDraw(nameA, nameB, totalMoves, moves, gameType) {
   }
 }
 
+// 免注册模式：游客房间不落库（无 GameLog/Elo）——所有落库调用统一走这两个包装
+function persistGame(room, ...a) { if (!room || !room.guestMode) recordGame(...a); }
+function persistDraw(room, ...a) { if (!room || !room.guestMode) recordDraw(...a); }
+
 async function isBanned(username) {
   const ban = await Ban.findOne({ username });
   if (!ban) return { banned: false };
@@ -437,6 +441,20 @@ async function verifyTurnstile(token) {
 app.get('/api/turnstile-key', (req, res) => {
   res.json({ siteKey: process.env.TURNSTILE_SITE_KEY || '' });
 });
+
+// ==================== 游客票据（免注册模式） ====================
+// 纯内存不落库：主动进房每次都要人机验证；断线重连凭票据+grace座位免验
+const guestTickets = new Map(); // 规范化昵称 → { ticket, exp }
+function issueGuestTicket(name) {
+  const ticket = genToken();
+  guestTickets.set(name, { ticket, exp: Date.now() + 12 * 3600 * 1000 });
+  return ticket;
+}
+function guestTicketPayload(ws, name) {
+  if (!ws._guest) return {};
+  const t = guestTickets.get(name);
+  return t && Date.now() <= t.exp ? { guestTicket: t.ticket } : {};
+}
 
 // ==================== 认证路由 ====================
 app.post('/api/register', async (req, res) => {
@@ -773,12 +791,42 @@ wss.on('connection', (ws) => {
       if (msg.type !== 'join' && !authenticated) { ws.send(JSON.stringify({ type: 'error', msg: '未认证' })); return; }
 
       if (msg.type === 'join') {
-        if (!msg.token) { ws.send(JSON.stringify({ type: 'error', msg: '请先登录' })); ws.close(); clearTimeout(authTimer); return; }
-        try {
-          const tokenDoc = await Token.findOne({ token: msg.token });
-          if (!tokenDoc || tokenDoc.username !== msg.name) { ws.send(JSON.stringify({ type: 'error', msg: '认证失败' })); ws.close(); clearTimeout(authTimer); return; }
+        if (msg.guest) {
+          // ===== 免注册游客：仅人机、主动进房需人机验证、重连凭内存票据 =====
+          const rejectJoin = (m) => { ws.send(JSON.stringify({ type: 'error', msg: m })); ws.close(); clearTimeout(authTimer); };
+          if (msg.mode !== 'pve') return rejectJoin('游客仅支持人机对战');
+          const normName = String(msg.name || '').trim().normalize('NFC');
+          if (!/^[一-龥A-Za-z0-9_]{1,12}$/.test(normName)) return rejectJoin('昵称需为1-12位中英文/数字/下划线');
+          if (await User.findOne({ username: normName })) return rejectJoin('昵称已被注册用户使用');
+          const gGame = ['gomoku', 'go', 'chess', 'intl_chess'].includes(msg.gameType) ? msg.gameType : 'gomoku';
+          if (msg.room !== gGame + '_gpve_' + normName) return rejectJoin('房间标识不合法');
+          if (!['easy', 'medium', 'hard'].includes(msg.difficulty)) msg.difficulty = 'easy'; // 游客不支持动态档
+          if (!TURNSTILE_SECRET_KEY) {
+            issueGuestTicket(normName); // 未配置密钥：与 verifyTurnstile 一致恒过（本地开发）
+          } else if (msg.turnstileToken) {
+            if (!(await verifyTurnstile(String(msg.turnstileToken)))) return rejectJoin('人机验证失败，请重试');
+            issueGuestTicket(normName);
+          } else if (msg.guestTicket) {
+            let stored = guestTickets.get(normName);
+            if (stored && Date.now() > stored.exp) { guestTickets.delete(normName); stored = null; }
+            const rm = rooms.get(msg.room);
+            const graceSeat = rm && rm.graceTimer && rm.players.some(p => p.grace && rm.names[p.color] === normName);
+            if (!stored || stored.ticket !== msg.guestTicket || !graceSeat) return rejectJoin('进入房间需人机验证');
+            issueGuestTicket(normName); // 轮换，票据单次有效
+          } else {
+            return rejectJoin('进入房间需人机验证');
+          }
+          msg.name = normName;
           authenticated = true; clearTimeout(authTimer);
-        } catch { ws.send(JSON.stringify({ type: 'error', msg: '认证失败' })); ws.close(); clearTimeout(authTimer); return; }
+          ws._guest = true;
+        } else {
+          if (!msg.token) { ws.send(JSON.stringify({ type: 'error', msg: '请先登录' })); ws.close(); clearTimeout(authTimer); return; }
+          try {
+            const tokenDoc = await Token.findOne({ token: msg.token });
+            if (!tokenDoc || tokenDoc.username !== msg.name) { ws.send(JSON.stringify({ type: 'error', msg: '认证失败' })); ws.close(); clearTimeout(authTimer); return; }
+            authenticated = true; clearTimeout(authTimer);
+          } catch { ws.send(JSON.stringify({ type: 'error', msg: '认证失败' })); ws.close(); clearTimeout(authTimer); return; }
+        }
 
         const roomId = msg.room || 'default';
         const name = msg.name || '游客';
@@ -788,10 +836,12 @@ wss.on('connection', (ws) => {
           ws.send(JSON.stringify({ type: 'error', msg: `账号已被封禁：${ban.reason}（${timeInfo}）` }));
           return;
         }
-        // 登记在线用户（多标签页用 Set 累积）
-        ws._onlineUser = name;
-        if (!onlineUsers.has(name)) onlineUsers.set(name, new Set());
-        onlineUsers.get(name).add(ws);
+        // 登记在线用户（多标签页用 Set 累积；游客不登记，避免与同名注册者纠缠）
+        if (!ws._guest) {
+          ws._onlineUser = name;
+          if (!onlineUsers.has(name)) onlineUsers.set(name, new Set());
+          onlineUsers.get(name).add(ws);
+        }
 
         const gameType = ['gomoku', 'go', 'chess', 'intl_chess'].includes(msg.gameType) ? msg.gameType : 'gomoku';
         let timerSeconds = Math.floor(Number(msg.timerSeconds));
@@ -800,6 +850,11 @@ wss.on('connection', (ws) => {
         let room = rooms.get(roomId);
         const isNewRoom = !room;
         if (isNewRoom) room = createRoom(roomId, gameType, timerSeconds, msg.mode, msg.difficulty, msg.forbidden);
+        if (ws._guest) {
+          // 房间隔离：游客只能进自己 gpve_ 房，且该房必须是游客人机房
+          if (isNewRoom) room.guestMode = true;
+          else if (!room.guestMode || room.mode !== 'pve') { ws.send(JSON.stringify({ type: 'error', msg: '房间不可用' })); ws.close(); return; }
+        }
 
         // 清理断线的死连接后再判断房间人数（保留 AI 与断线宽限座位）
         if (!isNewRoom) {
@@ -816,7 +871,7 @@ wss.on('connection', (ws) => {
           if (seat) {
             seat.grace = false; seat.ws = ws;
             if (msg.token) room.tokens[seat.color] = msg.token;
-            ws.send(JSON.stringify({ type: 'joined', color: seat.color, room: room.id, names: room.names, gameType: room.gameType, size: room.size, timerSeconds: room.timerSeconds, board: room.board, mode: room.mode, difficulty: room.difficulty, turn: room.turn, started: room.started }));
+            ws.send(JSON.stringify({ type: 'joined', color: seat.color, room: room.id, names: room.names, gameType: room.gameType, size: room.size, timerSeconds: room.timerSeconds, board: room.board, mode: room.mode, difficulty: room.difficulty, turn: room.turn, started: room.started, ...guestTicketPayload(ws, name) }));
             broadcast(room, { type: 'game_over', reason: '对局继续' });
             ws.send(JSON.stringify({ type: 'start', turn: room.turn }));
             if (!room.players.some(pp => pp.grace)) {
@@ -912,7 +967,7 @@ wss.on('connection', (ws) => {
                 const humanColor = room.aiColor === 1 ? 2 : 1;
                 const wName = room.names[humanColor], lName = room.names[room.aiColor];
                 broadcast(room, { type: 'game_over', winner: humanColor, reason: `AI禁手：${forbidden.type}，判负`, winnerName: wName, loserName: lName });
-                if (wName && lName && wName !== lName) recordGame(wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+                if (wName && lName && wName !== lName) persistGame(room, wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
                 cleanupRoom(room);
                 return;
               }
@@ -928,7 +983,7 @@ wss.on('connection', (ws) => {
               const humanColor = room.aiColor === 1 ? 2 : 1;
               const wName = room.names[room.aiColor], lName = room.names[humanColor];
               broadcast(room, { type: 'game_over', winner: room.aiColor, reason: '五子连珠', winnerName: wName, loserName: lName });
-              if (wName && lName && wName !== lName) recordGame(wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+              if (wName && lName && wName !== lName) persistGame(room, wName, lName, room.moveCount, room.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
               cleanupRoom(room);
             }
           }
@@ -1021,7 +1076,7 @@ wss.on('connection', (ws) => {
             const winner = 2;
             const wName = currentRoom.names[winner], lName = currentRoom.names[myColor];
             broadcast(currentRoom, { type: 'game_over', winner, reason: `黑棋禁手：${forbidden.type}，判负`, winnerName: wName, loserName: lName });
-            if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+            if (wName && lName && wName !== lName) persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
             cleanupRoom(currentRoom);
             return;
           }
@@ -1038,7 +1093,7 @@ wss.on('connection', (ws) => {
           broadcast(currentRoom, { type: 'game_over', winner: myColor, reason: '五子连珠', winnerName: wName, loserName: lName });
           console.log('五子棋游戏结束:', { wName, lName, myColor, names: currentRoom.names });
           if (wName && lName && wName !== lName) {
-            recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+            persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
           } else {
             console.log('五子棋跳过recordGame:', { wName, lName });
           }
@@ -1047,7 +1102,7 @@ wss.on('connection', (ws) => {
           // 满盘无五连：和棋
           currentRoom.gameOver = true; stopTimer(currentRoom);
           broadcast(currentRoom, { type: 'game_over', winner: 0, reason: '满盘无五连，和棋', winnerName: '平局', loserName: '' });
-          recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+          persistDraw(currentRoom, currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
           cleanupRoom(currentRoom);
         } else if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
           const gen = currentRoom.ply;
@@ -1064,7 +1119,7 @@ wss.on('connection', (ws) => {
                   const humanColor = currentRoom.aiColor === 1 ? 2 : 1;
                   const wName = currentRoom.names[humanColor], lName = currentRoom.names[currentRoom.aiColor];
                   broadcast(currentRoom, { type: 'game_over', winner: humanColor, reason: `AI禁手：${forbidden.type}，判负`, winnerName: wName, loserName: lName });
-                  if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+                  if (wName && lName && wName !== lName) persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
                   cleanupRoom(currentRoom);
                   return;
                 }
@@ -1080,12 +1135,12 @@ wss.on('connection', (ws) => {
                 const humanColor = currentRoom.aiColor === 1 ? 2 : 1;
                 const wName = currentRoom.names[currentRoom.aiColor], lName = currentRoom.names[humanColor];
                 broadcast(currentRoom, { type: 'game_over', winner: currentRoom.aiColor, reason: '五子连珠', winnerName: wName, loserName: lName });
-                if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+                if (wName && lName && wName !== lName) persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
                 cleanupRoom(currentRoom);
               } else if (currentRoom.moveCount >= currentRoom.size * currentRoom.size) {
                 currentRoom.gameOver = true; stopTimer(currentRoom);
                 broadcast(currentRoom, { type: 'game_over', winner: 0, reason: '满盘无五连，和棋', winnerName: '平局', loserName: '' });
-                recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
+                persistDraw(currentRoom, currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'gomoku');
                 cleanupRoom(currentRoom);
               }
             }
@@ -1154,8 +1209,8 @@ wss.on('connection', (ws) => {
                 const wName = winner === 0 ? '平局' : currentRoom.names[winner] || '';
                 const lName = winner === 0 ? '' : currentRoom.names[winner === 1 ? 2 : 1] || '';
                 broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName, black, white });
-                if (winner !== 0 && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
-                else if (winner === 0) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
+                if (winner !== 0 && wName && lName && wName !== lName) persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
+                else if (winner === 0) persistDraw(currentRoom, currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
                 cleanupRoom(currentRoom);
               }
             }
@@ -1185,7 +1240,7 @@ wss.on('connection', (ws) => {
           currentRoom.gameOver = true; stopTimer(currentRoom);
           const wName = currentRoom.names[myColor], lName = currentRoom.names[opponent];
           broadcast(currentRoom, { type: 'game_over', winner: myColor, reason: chessInCheck(currentRoom.board, opponent) ? '将杀' : '困毙', winnerName: wName, loserName: lName });
-          if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'chess');
+          if (wName && lName && wName !== lName) persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'chess');
           cleanupRoom(currentRoom);
         } else if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
           const gen = currentRoom.ply;
@@ -1205,7 +1260,7 @@ wss.on('connection', (ws) => {
                 currentRoom.gameOver = true; stopTimer(currentRoom);
                 const wName = currentRoom.names[currentRoom.aiColor], lName = currentRoom.names[currentRoom.turn];
                 broadcast(currentRoom, { type: 'game_over', winner: currentRoom.aiColor, reason: chessInCheck(currentRoom.board, currentRoom.turn) ? '将杀' : '困毙', winnerName: wName, loserName: lName });
-                if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'chess');
+                if (wName && lName && wName !== lName) persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'chess');
                 cleanupRoom(currentRoom);
               }
             }
@@ -1246,9 +1301,9 @@ wss.on('connection', (ws) => {
           broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName });
           // 将杀记录胜负；逼和为平局记录和棋
           if (checkmate && wName && lName && wName !== lName) {
-            recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
+            persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
           } else if (!checkmate) {
-            recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
+            persistDraw(currentRoom, currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
           }
           cleanupRoom(currentRoom);
         } else {
@@ -1278,8 +1333,8 @@ wss.on('connection', (ws) => {
                   const reason = aiCheckmate ? '将杀' : '逼和（平局）';
                   const winner = aiCheckmate ? currentRoom.aiColor : 0;
                   broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName });
-                  if (aiCheckmate && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
-                  else if (!aiCheckmate) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
+                  if (aiCheckmate && wName && lName && wName !== lName) persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
+                  else if (!aiCheckmate) persistDraw(currentRoom, currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), 'intl_chess');
                   cleanupRoom(currentRoom);
                 } else if (aiCheck) {
                   broadcast(currentRoom, { type: 'chat', color: 0, text: '将军！' });
@@ -1313,8 +1368,8 @@ wss.on('connection', (ws) => {
         const wName = winner === 0 ? '平局' : currentRoom.names[winner] || '';
         const lName = winner === 0 ? '' : currentRoom.names[winner === 1 ? 2 : 1] || '';
         broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName, black, white });
-        if (winner !== 0 && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
-        else if (winner === 0) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
+        if (winner !== 0 && wName && lName && wName !== lName) persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
+        else if (winner === 0) persistDraw(currentRoom, currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
         cleanupRoom(currentRoom);
       } else if (currentRoom.mode === 'pve' && currentRoom.turn === currentRoom.aiColor) {
         const gen = currentRoom.ply;
@@ -1357,8 +1412,8 @@ wss.on('connection', (ws) => {
               const wName = winner === 0 ? '平局' : currentRoom.names[winner] || '';
               const lName = winner === 0 ? '' : currentRoom.names[winner === 1 ? 2 : 1] || '';
               broadcast(currentRoom, { type: 'game_over', winner, reason, winnerName: wName, loserName: lName, black, white });
-              if (winner !== 0 && wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
-              else if (winner === 0) recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
+              if (winner !== 0 && wName && lName && wName !== lName) persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
+              else if (winner === 0) persistDraw(currentRoom, currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, color: m.color })), 'go');
               cleanupRoom(currentRoom);
             }
           }
@@ -1377,7 +1432,7 @@ wss.on('connection', (ws) => {
       const winner = myColor === 1 ? 2 : 1;
       const wName = currentRoom.names[winner], lName = currentRoom.names[myColor];
       broadcast(currentRoom, { type: 'game_over', winner, reason: '认输', winnerName: wName, loserName: lName });
-      if (wName && lName && wName !== lName) recordGame(wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), currentRoom.gameType);
+      if (wName && lName && wName !== lName) persistGame(currentRoom, wName, lName, currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), currentRoom.gameType);
       cleanupRoom(currentRoom);
     }
 
@@ -1486,7 +1541,7 @@ wss.on('connection', (ws) => {
       if (msg.approve) {
         currentRoom.gameOver = true; stopTimer(currentRoom);
         broadcast(currentRoom, { type: 'game_over', winner: 0, reason: '双方同意和棋', winnerName: '平局', loserName: '' });
-        recordDraw(currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), currentRoom.gameType);
+        persistDraw(currentRoom, currentRoom.names[1], currentRoom.names[2], currentRoom.moveCount, currentRoom.moveHistory.map(m => ({ type: m.type, r: m.r, c: m.c, fr: m.fr, fc: m.fc, tr: m.tr, tc: m.tc, color: m.color, special: m.special })), currentRoom.gameType);
         cleanupRoom(currentRoom);
       } else {
         currentRoom.drawCount[currentRoom.pendingDraw.from - 1]++;
@@ -1557,7 +1612,7 @@ wss.on('connection', (ws) => {
         const filtered = filteredText !== text;
         if (filtered) addViolation(username);
         if (filtered) ws.send(JSON.stringify({ type: 'chat', color: 0, text: '系统：消息包含敏感词，已过滤处理' }));
-        await ChatLog.create({ id: genId(), roomId: currentRoom.id, username, color: chatColor, text: filteredText, filtered, time: new Date().toISOString() });
+        if (!currentRoom.guestMode) await ChatLog.create({ id: genId(), roomId: currentRoom.id, username, color: chatColor, text: filteredText, filtered, time: new Date().toISOString() });
         broadcast(currentRoom, { type: 'chat', color: chatColor, text: filteredText, name: username });
       } catch (e) { console.error('聊天消息处理错误:', e.message); }
     }
@@ -1591,8 +1646,8 @@ wss.on('connection', (ws) => {
         return;
       }
     }
-    // 人机对战房间：玩家离开直接删除房间
-    if (room.mode === 'pve') {
+    // 人机对战房间：玩家离开直接删除房间（游客房除外——走下方宽限期，支持票据重连）
+    if (room.mode === 'pve' && !room.guestMode) {
       room.gameOver = true;
       cleanupRoom(room);
       rooms.delete(room.id);
@@ -1616,9 +1671,9 @@ wss.on('connection', (ws) => {
       delete room.tokens[myColor];
     }
     broadcast(room, { type: 'player_left', color: myColor });
-    if (room.players.length === 0) {
+    if (!room.players.some(p => !p.isAI)) {
       cleanupRoom(room);
-      rooms.delete(room.id);
+      rooms.delete(room.id); // 无人类玩家（含游客房仅剩AI）即删房
     } else if (room.gameOver || wasChoosing) {
       resetForNewGame(room);
     }
