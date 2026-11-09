@@ -8,6 +8,14 @@
 <meta http-equiv="Expires" content="0">
 <title>在线棋类对战</title>
 <link rel="stylesheet" href="style.css?v=14">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="theme-color" content="#1a1a2e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="棋类对战">
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body>
@@ -330,6 +338,12 @@
   </div>
 </div>
 
+<script>
+// PWA：注册 Service Worker（仅 http/https 环境；file:// 下跳过）
+if('serviceWorker' in navigator&&(location.protocol==='https:'||location.protocol==='http:')){
+  window.addEventListener('load',()=>{navigator.serviceWorker.register('/sw.js').catch(()=>{})});
+}
+</script>
 <script src="game.js?v=16"></script>
 <script src="game2.js?v=17"></script>
 <script src="game3.js?v=16"></script>
